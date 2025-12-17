@@ -1,0 +1,3 @@
+[submodule "llm_kd"]
+	path = llm_kd
+	url = https://github.com/flaat/llm_kd.git
