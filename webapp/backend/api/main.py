@@ -1,0 +1,123 @@
+"""FastAPI application for counterfactual narrative explanations."""
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from typing import Dict, Any
+import sys
+from pathlib import Path
+
+# Add backend to path
+backend_dir = Path(__file__).parent.parent
+sys.path.insert(0, str(backend_dir))
+
+from api.models import ExplainRequest, ExplainResponse, ErrorResponse
+from services.pipeline_service import pipeline_service
+
+app = FastAPI(
+    title="Counterfactual Narrative Explainer API",
+    description="API for generating counterfactual narrative explanations using LLM pipeline",
+    version="1.0.0"
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+@app.get("/")
+async def root():
+    """Root endpoint."""
+    return {"message": "Counterfactual Narrative Explainer API", "version": "1.0.0"}
+
+
+@app.get("/api/datasets")
+async def get_datasets():
+    """Get available datasets with their display names."""
+    try:
+        datasets = pipeline_service.get_available_datasets()
+        # Return both API keys and display names
+        dataset_info = []
+        for dataset in datasets:
+            display_name = pipeline_service.dataset_display_names.get(dataset, dataset.title())
+            dataset_info.append({
+                "key": dataset,
+                "name": display_name
+            })
+        return {"datasets": datasets, "dataset_info": dataset_info}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/models")
+async def get_models():
+    """Get available models."""
+    try:
+        models = pipeline_service.get_available_models()
+        return {"models": models}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/examples/{dataset}")
+async def get_example(dataset: str):
+    """Get a random factual/counterfactual pair for a dataset."""
+    try:
+        example = pipeline_service.get_example(dataset)
+        if example is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No examples found for dataset: {dataset}"
+            )
+        return example
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/examples/{dataset}/new-counterfactual")
+async def get_new_counterfactual(dataset: str, factual: Dict[str, Any]):
+    """Get a new random counterfactual for a given factual instance."""
+    try:
+        result = pipeline_service.get_new_counterfactual(dataset, factual)
+        if result is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No counterfactuals found for dataset: {dataset}"
+            )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/explain", response_model=ExplainResponse)
+async def explain(request: ExplainRequest):
+    """Generate a narrative explanation for a factual/counterfactual pair."""
+    try:
+        result = pipeline_service.generate_explanation(
+            dataset=request.dataset,
+            model=request.model,
+            factual=request.factual,
+            counterfactual=request.counterfactual,
+            use_refiner=request.use_refiner,
+            temperature=request.temperature,
+            top_p=request.top_p,
+            max_tokens=request.max_tokens
+        )
+        return ExplainResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
+
