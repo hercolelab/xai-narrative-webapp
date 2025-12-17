@@ -5,19 +5,33 @@
 Before starting, make sure you have:
 - ✅ Python 3.8+ installed
 - ✅ Node.js 16+ installed
-- ✅ `test_counterfactuals.json` file copied to the `backend/` directory
+- ✅ Git installed
+- ✅ `test_counterfactuals.json` file copied to the `webapp/backend/` directory
 - ✅ (Optional) Google API Key if you want to use Gemini models
-- ✅ (Optional) Access to `llm_kd` repository if you want to use vLLM models
+- ✅ (Optional) GPU with CUDA if you want to use vLLM models
 
 ## Step-by-Step Setup
 
-### 1. Navigate to the project directory
+### 1. Clone the repository with submodules
 
 ```bash
-cd narrative-explainer-webapp
+# Clone with submodules (recommended)
+git clone --recurse-submodules <xai-narrative-webapp-repo-url>
+cd xai-narrative-webapp
+
+# OR if you already cloned without submodules:
+git submodule update --init --recursive
 ```
 
-### 2. Copy the data file
+This will automatically download the `llm_kd` repository as a submodule.
+
+### 2. Navigate to the project directory
+
+```bash
+cd xai-narrative-webapp
+```
+
+### 3. Copy the data file
 
 Make sure `test_counterfactuals.json` is in the `backend/` directory:
 
@@ -26,7 +40,7 @@ Make sure `test_counterfactuals.json` is in the `backend/` directory:
 cp /path/to/test_counterfactuals.json backend/test_counterfactuals.json
 ```
 
-### 3. Set up Backend (FastAPI)
+### 4. Set up Backend (FastAPI)
 
 #### Option A: Using the startup script (Recommended)
 
@@ -49,7 +63,7 @@ pip install -r requirements.txt
 uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### 4. Set up Frontend (React + Vite)
+### 5. Set up Frontend (React + Vite)
 
 Open a **new terminal window** (keep the backend running), then:
 
@@ -72,7 +86,7 @@ npm install
 npm run dev
 ```
 
-### 5. (Optional) Configure Gemini Support
+### 6. (Optional) Configure Gemini Support
 
 If you want to use Gemini models, set your Google API key:
 
@@ -91,7 +105,7 @@ GEMINI_MODEL_NAME=gemini-2.0-flash-exp
 EOF
 ```
 
-### 6. Access the Application
+### 7. Access the Application
 
 1. Open your browser and go to: **http://localhost:5173**
 2. You should see the Counterfactual Narrative Explainer interface
@@ -110,9 +124,11 @@ EOF
 
 ### Backend won't start
 
-- **Import errors**: Make sure the `llm_kd` repository is accessible (only needed for vLLM models)
+- **Submodule not initialized**: Run `git submodule update --init --recursive` to initialize the llm_kd submodule
+- **Import errors**: Make sure the `llm_kd` submodule is initialized (only needed for vLLM models)
 - **Port 8000 already in use**: Change the port in `start-backend.sh` or stop the process using port 8000
 - **Missing dependencies**: Run `pip install -r requirements.txt` again
+- **MODEL_MAPPING empty**: Ensure llm_kd submodule is initialized and check backend logs for import messages
 
 ### Frontend won't start
 

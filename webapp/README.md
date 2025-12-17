@@ -5,30 +5,37 @@ A modern web application for generating counterfactual narrative explanations us
 ## Project Structure
 
 ```
-narrative-explainer-webapp/
-├── backend/
-│   ├── api/
-│   │   ├── __init__.py
-│   │   ├── main.py          # FastAPI application
-│   │   └── models.py        # Pydantic request/response models
-│   ├── services/
-│   │   ├── __init__.py
-│   │   └── pipeline_service.py  # Service to wrap the LLM pipeline
-│   ├── requirements.txt
-│   └── .env.example
-├── frontend/
+xai-narrative-webapp/
+├── llm_kd/                    # Git submodule - LLM pipeline repository
 │   ├── src/
-│   │   ├── components/
-│   │   │   ├── DatasetSelector.jsx
-│   │   │   ├── ModelSelector.jsx
-│   │   │   ├── DataDisplay.jsx
-│   │   │   └── ExplanationDisplay.jsx
-│   │   ├── App.jsx
-│   │   ├── App.css
-│   │   └── main.jsx
-│   ├── package.json
-│   ├── vite.config.js
-│   └── index.html
+│   │   ├── utils.py           # MODEL_MAPPING and prompt templates
+│   │   └── pipeline.py
+│   └── data/
+│       └── dataset_kb.py     # Dataset knowledge base
+├── webapp/
+│   ├── backend/
+│   │   ├── api/
+│   │   │   ├── __init__.py
+│   │   │   ├── main.py          # FastAPI application
+│   │   │   └── models.py        # Pydantic request/response models
+│   │   ├── services/
+│   │   │   ├── __init__.py
+│   │   │   └── pipeline_service.py  # Service to wrap the LLM pipeline
+│   │   ├── requirements.txt
+│   │   └── test_counterfactuals.json
+│   └── frontend/
+│       ├── src/
+│       │   ├── components/
+│       │   │   ├── DatasetSelector.jsx
+│       │   │   ├── ModelSelector.jsx
+│       │   │   ├── DataDisplay.jsx
+│       │   │   └── ExplanationDisplay.jsx
+│       │   ├── App.jsx
+│       │   ├── App.css
+│       │   └── main.jsx
+│       ├── package.json
+│       ├── vite.config.js
+│       └── index.html
 └── README.md
 ```
 
@@ -48,29 +55,50 @@ narrative-explainer-webapp/
 
 - Python 3.8+
 - Node.js 16+
-- Access to the `llm_kd` repository (should be at `../llm_kd` relative to this project)
+- Git (for submodule management)
 - GPU with CUDA support (for vLLM models, optional if using Gemini)
 - Google API Key (for Gemini models, optional if using vLLM)
 
-## Backend Setup
+## Initial Setup (First Time Clone)
 
-1. Navigate to the backend directory:
+This repository uses `llm_kd` as a Git submodule. When cloning for the first time, you need to initialize the submodule:
+
 ```bash
-cd narrative-explainer-webapp/backend
+# Clone with submodules in one command (recommended)
+git clone --recurse-submodules <xai-narrative-webapp-repo-url>
+cd xai-narrative-webapp
+
+# OR if you already cloned without submodules:
+git submodule update --init --recursive
 ```
 
-2. Create a virtual environment:
+This will automatically download the `llm_kd` repository into the `llm_kd/` directory.
+
+## Backend Setup
+
+1. **Initialize the submodule** (if not already done):
+```bash
+cd xai-narrative-webapp
+git submodule update --init --recursive
+```
+
+2. Navigate to the backend directory:
+```bash
+cd webapp/backend
+```
+
+3. Create a virtual environment:
 ```bash
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 ```
 
-3. Install dependencies:
+4. Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
 
-4. Set up environment variables:
+5. Set up environment variables:
 ```bash
 cp .env.example .env
 # Edit .env with your configuration
@@ -87,7 +115,7 @@ cp .env.example .env
    
    **Note:** Any model name starting with "gemini-" will be automatically routed to Google Generative AI, so you can use any available Gemini model by setting `GEMINI_MODEL_NAME` or by selecting a Gemini model in the frontend (if it's configured).
 
-5. **Copy the data file** (if not already present):
+6. **Copy the data file** (if not already present):
    ```bash
    # The test_counterfactuals.json file should be in the backend directory
    # If you have it elsewhere, copy it:
@@ -96,11 +124,6 @@ cp .env.example .env
    
    The application will automatically load this file to provide factual and counterfactual samples.
 
-6. Ensure the `llm_kd` repository is accessible (only needed for vLLM models):
-   - The backend expects to import from `src.utils` and `src.explainer.test_counterfactuals`
-   - Make sure the parent directory contains the `llm_kd` repository
-   - **Note:** If `test_counterfactuals.json` is in the backend directory, the app will use that instead of importing from `llm_kd`
-
 7. Start the FastAPI server:
 ```bash
 uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
@@ -108,11 +131,33 @@ uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
 
 The API will be available at `http://localhost:8000`
 
+## Updating the llm_kd Submodule
+
+To sync with the latest changes from the llm_kd repository:
+
+```bash
+cd llm_kd
+git pull origin main  # or whatever branch you're tracking
+cd ..
+git add llm_kd
+git commit -m "Update llm_kd submodule"
+```
+
+Or update to a specific commit:
+
+```bash
+cd llm_kd
+git checkout <commit-hash-or-branch>
+cd ..
+git add llm_kd
+git commit -m "Update llm_kd to specific commit"
+```
+
 ## Frontend Setup
 
 1. Navigate to the frontend directory:
 ```bash
-cd narrative-explainer-webapp/frontend
+cd webapp/frontend
 ```
 
 2. Install dependencies:
@@ -253,9 +298,11 @@ The frontend uses Vite for fast hot module replacement. Changes to React compone
 
 ### Backend Issues
 
-- **Import errors**: Ensure the `llm_kd` repository is accessible at the expected path (only needed for vLLM models)
+- **Submodule not initialized**: Run `git submodule update --init --recursive` to initialize the llm_kd submodule
+- **Import errors**: Ensure the `llm_kd` submodule is initialized and accessible (only needed for vLLM models)
 - **GPU errors**: Check CUDA installation and GPU availability (only needed for vLLM models)
 - **Model loading errors**: Verify model paths in MODEL_MAPPING (for vLLM models)
+- **MODEL_MAPPING empty**: Make sure llm_kd submodule is initialized and `src/utils.py` is accessible
 - **Gemini not appearing**: Ensure `GOOGLE_API_KEY` is set in your environment variables
 - **Gemini API errors**: Verify your API key is valid and has proper permissions. Check Google AI Studio for API status
 

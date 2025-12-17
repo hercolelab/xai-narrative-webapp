@@ -8,26 +8,54 @@ from pathlib import Path
 
 # Add paths to import from llm_kd
 # Try multiple possible locations
-project_root = Path(__file__).parent.parent.parent  # narrative-explainer-webapp/
+project_root = Path(__file__).parent.parent.parent  # webapp/
+repo_root = project_root.parent  # xai-narrative-webapp/
+
 possible_paths = [
-    project_root.parent / "llm_kd",  # ../llm_kd
-    project_root.parent.parent / "llm_kd",  # ../../llm_kd
+    repo_root / "llm_kd",  # xai-narrative-webapp/llm_kd (submodule location)
+    project_root.parent.parent / "llm_kd",  # ../../llm_kd (sibling of xai-narrative-webapp)
+    project_root.parent / "llm_kd",  # ../llm_kd (if in webapp directory)
     project_root / "llm_kd",  # ./llm_kd (if in same directory)
 ]
 
+llm_kd_path = None
 for path in possible_paths:
     if path.exists():
         sys.path.insert(0, str(path))
+        llm_kd_path = path
+        print(f"✓ Found llm_kd at: {path}")
         break
+else:
+    print("⚠️ Warning: llm_kd repository not found in any expected location")
+    print(f"   Searched in: {possible_paths}")
+    print("   If using git submodule, run: git submodule update --init --recursive")
 
+# Try to import vLLM (optional, only needed for vLLM models)
 try:
     from vllm import LLM, SamplingParams
-    from src.utils import MODEL_MAPPING, prompt
-    from src.explainer.test_counterfactuals import test_counterfactuals
+    VLLM_AVAILABLE = True
+except ImportError:
+    print("Info: vLLM not available. Only Gemini models will work.")
+    VLLM_AVAILABLE = False
+    LLM = None
+    SamplingParams = None
+
+# Try to import from llm_kd
+try:
+    from src.utils import MODEL_MAPPING, prompt as prompt_template
+    from data.dataset_kb import dataset_kb
+    # Optional import
+    try:
+        from src.explainer.test_counterfactuals import test_counterfactuals
+    except ImportError:
+        test_counterfactuals = {}
+    print("✓ Successfully imported from llm_kd")
 except ImportError as e:
     print(f"Warning: Could not import from llm_kd: {e}")
-    print("Make sure the llm_kd repository is available at ../llm_kd")
+    print("Make sure the llm_kd repository is available and dependencies are installed")
     MODEL_MAPPING = {}
+    prompt_template = None
+    dataset_kb = {}
     test_counterfactuals = {}
 
 # Try to import Google Generative AI
@@ -262,6 +290,9 @@ class PipelineService:
             return "gemini"
         
         # Handle vLLM models
+        if not MODEL_MAPPING:
+            raise ValueError("MODEL_MAPPING is not available. Make sure llm_kd repository is properly set up.")
+        
         if model_name not in MODEL_MAPPING:
             raise ValueError(f"Model {model_name} not found in MODEL_MAPPING or available Gemini models")
         
@@ -313,15 +344,11 @@ class PipelineService:
             # Load model (or check if it's Gemini)
             model_instance = self._load_model(model)
             
-            # Format prompt using the prompt function from src.utils
-            # For Gemini, we'll use the prompt function if available, otherwise format manually
+            # Format prompt using the prompt template from llm_kd
             try:
-                prompt_text = prompt(
-                    factual=factual,
-                    counterfactual=counterfactual,
-                    dataset=dataset
-                )
-            except (NameError, AttributeError):
+                prompt_text = self._format_prompt(factual, counterfactual, dataset)
+            except Exception as e:
+                print(f"Error formatting prompt: {e}")
                 # Fallback prompt formatting if prompt function is not available
                 prompt_text = self._format_fallback_prompt(factual, counterfactual, dataset)
             
@@ -336,6 +363,9 @@ class PipelineService:
                 )
             else:
                 # Use vLLM
+                if not VLLM_AVAILABLE:
+                    raise ValueError("vLLM is not available. Install vllm package or use Gemini models.")
+                
                 sampling_params = SamplingParams(
                     temperature=temperature,
                     top_p=top_p,
@@ -475,13 +505,41 @@ class PipelineService:
         else:
             raise ValueError("No response generated from Gemini")
     
+    def _format_prompt(
+        self,
+        factual: Dict[str, Any],
+        counterfactual: Dict[str, Any],
+        dataset: str
+    ) -> str:
+        """Format the prompt using the template from llm_kd."""
+        if prompt_template is None:
+            return self._format_fallback_prompt(factual, counterfactual, dataset)
+        
+        # Map dataset name to dataset_kb key
+        dataset_key = self.dataset_mapping.get(dataset.lower(), dataset)
+        if dataset_key not in dataset_kb:
+            # Try with title case
+            dataset_key = dataset_key.title()
+            if dataset_key not in dataset_kb:
+                print(f"Warning: Dataset '{dataset}' not found in dataset_kb, using fallback")
+                return self._format_fallback_prompt(factual, counterfactual, dataset)
+        
+        # Format the prompt template
+        formatted_prompt = prompt_template.format(
+            dataset_description=dataset_kb[dataset_key],
+            factual_example=str(factual),
+            counterfactual_example=str(counterfactual)
+        )
+        
+        return formatted_prompt
+    
     def _format_fallback_prompt(
         self,
         factual: Dict[str, Any],
         counterfactual: Dict[str, Any],
         dataset: str
     ) -> str:
-        """Format a fallback prompt if the prompt function is not available."""
+        """Format a fallback prompt if the prompt template is not available."""
         prompt = f"""Generate a narrative explanation for a counterfactual instance in the {dataset} dataset.
 
 Factual Instance:
