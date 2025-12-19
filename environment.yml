@@ -1,0 +1,15 @@
+name: xai-webapp
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+    - fastapi==0.104.1
+    - uvicorn[standard]==0.24.0
+    - pydantic==2.5.0
+    - python-multipart==0.0.6
+    - google-generativeai>=0.3.0
+    # - vllm>=0.2.0  # Uncomment if using vLLM models (requires GPU with CUDA)
+

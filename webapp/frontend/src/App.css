@@ -1,32 +1,236 @@
-/* Additional custom styles if needed */
+/* Core Tailwind */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Custom scrollbar for dark theme */
+/* Base styles */
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    @apply font-sans text-neutral-100 bg-dark-950;
+    background-image: 
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(249, 115, 22, 0.08), transparent),
+      radial-gradient(ellipse 60% 40% at 100% 0%, rgba(249, 115, 22, 0.04), transparent);
+    min-height: 100vh;
+  }
+
+  ::selection {
+    @apply bg-accent-500/30 text-white;
+  }
+}
+
+/* Custom scrollbar */
 ::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #1f2937;
+  @apply bg-dark-900;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #4b5563;
-  border-radius: 5px;
+  @apply bg-dark-600 rounded-full;
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #6b7280;
+  @apply bg-dark-500;
 }
 
-/* Line clamp utility */
-.line-clamp-2 {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+/* Component styles */
+@layer components {
+  /* Glass card effect */
+  .glass-card {
+    @apply bg-dark-800/60 backdrop-blur-xl border border-dark-700/50;
+    box-shadow: 
+      0 4px 6px -1px rgba(0, 0, 0, 0.3),
+      0 2px 4px -2px rgba(0, 0, 0, 0.2),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.03);
+  }
+
+  .glass-card-elevated {
+    @apply bg-dark-850/80 backdrop-blur-xl border border-dark-700/60;
+    box-shadow: 
+      0 10px 15px -3px rgba(0, 0, 0, 0.4),
+      0 4px 6px -4px rgba(0, 0, 0, 0.3),
+      inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+  }
+
+  /* Button base */
+  .btn {
+    @apply inline-flex items-center justify-center px-5 py-2.5 font-medium rounded-lg transition-all duration-200;
+    @apply focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-dark-900;
+  }
+
+  /* Primary button - Orange accent */
+  .btn-primary {
+    @apply bg-accent-500 text-white hover:bg-accent-600;
+    @apply focus:ring-accent-500;
+    @apply shadow-lg shadow-accent-500/20 hover:shadow-xl hover:shadow-accent-500/30;
+    @apply active:scale-[0.98];
+  }
+
+  .btn-primary:disabled {
+    @apply bg-dark-700 text-dark-500 shadow-none cursor-not-allowed hover:bg-dark-700;
+    @apply active:scale-100;
+  }
+
+  /* Secondary button - Ghost style */
+  .btn-secondary {
+    @apply bg-dark-750 text-neutral-200 border border-dark-600 hover:bg-dark-700 hover:border-dark-500;
+    @apply focus:ring-dark-500;
+    @apply active:scale-[0.98];
+  }
+
+  .btn-secondary:disabled {
+    @apply bg-dark-800 text-dark-500 border-dark-700 cursor-not-allowed hover:bg-dark-800 hover:border-dark-700;
+    @apply active:scale-100;
+  }
+
+  /* Ghost button */
+  .btn-ghost {
+    @apply bg-transparent text-neutral-300 hover:bg-dark-750 hover:text-white;
+    @apply focus:ring-dark-500;
+    @apply active:scale-[0.98];
+  }
+
+  /* Select input */
+  .select-modern {
+    @apply w-full px-4 py-3 bg-dark-800 border border-dark-600 text-neutral-100 rounded-lg;
+    @apply shadow-sm transition-all duration-200;
+    @apply focus:outline-none focus:ring-2 focus:ring-accent-500/50 focus:border-accent-500;
+    @apply hover:border-dark-500;
+    @apply disabled:bg-dark-850 disabled:text-dark-500 disabled:cursor-not-allowed disabled:border-dark-700;
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%23737373'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.75rem center;
+    background-size: 1.25rem;
+    padding-right: 2.5rem;
+  }
+
+  .select-modern option {
+    @apply bg-dark-800 text-neutral-100 py-2;
+  }
+
+  /* Labels */
+  .label {
+    @apply block text-sm font-medium text-neutral-400 mb-2 tracking-wide;
+  }
+
+  /* Badge */
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-accent {
+    @apply bg-accent-500/10 text-accent-400 border border-accent-500/20;
+  }
+
+  .badge-neutral {
+    @apply bg-dark-700 text-neutral-300 border border-dark-600;
+  }
+
+  /* Divider with gradient */
+  .divider {
+    @apply h-px w-full;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+  }
+
+  /* Shimmer loading effect */
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0) 0%,
+      rgba(255, 255, 255, 0.05) 50%,
+      rgba(255, 255, 255, 0) 100%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  /* Skeleton loader */
+  .skeleton {
+    @apply bg-dark-700 rounded animate-pulse;
+  }
 }
 
+/* Utility classes */
+@layer utilities {
+  /* Line clamp */
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Text gradient */
+  .text-gradient {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #fff 0%, #a3a3a3 100%);
+  }
+
+  .text-gradient-accent {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(135deg, #fb923c 0%, #f97316 50%, #ea580c 100%);
+  }
+
+  /* Glow effect on hover */
+  .hover-glow {
+    @apply transition-shadow duration-300;
+  }
+
+  .hover-glow:hover {
+    box-shadow: 0 0 20px rgba(249, 115, 22, 0.15);
+  }
+
+  /* Subtle background pattern */
+  .bg-grid {
+    background-image: 
+      linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+    background-size: 32px 32px;
+  }
+
+  /* Fade mask for overflow */
+  .fade-mask-bottom {
+    mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
+    -webkit-mask-image: linear-gradient(to bottom, black 80%, transparent 100%);
+  }
+}
+
+/* Animations */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 20px rgba(249, 115, 22, 0.2); }
+  50% { box-shadow: 0 0 30px rgba(249, 115, 22, 0.4); }
+}
+
+/* Focus visible styles */
+:focus-visible {
+  @apply outline-none ring-2 ring-accent-500/50 ring-offset-2 ring-offset-dark-900;
+}
+
+/* Hide focus ring for mouse users */
+:focus:not(:focus-visible) {
+  @apply outline-none ring-0;
+}

@@ -1,7 +1,6 @@
 import React from 'react';
 
 const DatasetSelector = ({ datasets, datasetInfo, selectedDataset, onDatasetChange, loading }) => {
-  // Default display names mapping
   const defaultDisplayNames = {
     'adult': 'Adult Income',
     'titanic': 'Titanic',
@@ -9,37 +8,53 @@ const DatasetSelector = ({ datasets, datasetInfo, selectedDataset, onDatasetChan
     'diabetes': 'Diabetes'
   };
 
+  const datasetIcons = {
+    'adult': '👤',
+    'titanic': '🚢',
+    'california': '🏠',
+    'diabetes': '🏥'
+  };
+
   const getDisplayName = (dataset) => {
     return datasetInfo?.[dataset] || defaultDisplayNames[dataset] || dataset.charAt(0).toUpperCase() + dataset.slice(1);
   };
 
-  // Ensure we always show all 4 datasets, even if API hasn't returned them yet
   const allDatasets = datasets && datasets.length > 0 
     ? datasets 
     : ['adult', 'titanic', 'california', 'diabetes'];
 
   return (
     <div className="w-full">
-      <label htmlFor="dataset" className="block text-sm font-semibold text-gray-300 mb-3">
+      <label htmlFor="dataset" className="label flex items-center gap-2">
+        <svg className="w-4 h-4 text-neutral-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4m0 5c0 2.21-3.582 4-8 4s-8-1.79-8-4" />
+        </svg>
         Dataset
       </label>
-      <select
-        id="dataset"
-        value={selectedDataset}
-        onChange={(e) => onDatasetChange(e.target.value)}
-        disabled={loading}
-        className="w-full px-4 py-3 bg-gray-700 border border-gray-600 text-white rounded-lg shadow-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-800 disabled:text-gray-500 disabled:cursor-not-allowed transition-all duration-200 hover:border-gray-500"
-      >
-        <option value="" className="bg-gray-700">Select a dataset</option>
-        {allDatasets.map((dataset) => (
-          <option key={dataset} value={dataset} className="bg-gray-700">
-            {getDisplayName(dataset)}
-          </option>
-        ))}
-      </select>
+      <div className="relative">
+        <select
+          id="dataset"
+          value={selectedDataset}
+          onChange={(e) => onDatasetChange(e.target.value)}
+          disabled={loading}
+          className="select-modern"
+        >
+          <option value="">Select a dataset...</option>
+          {allDatasets.map((dataset) => (
+            <option key={dataset} value={dataset}>
+              {datasetIcons[dataset] || '📊'} {getDisplayName(dataset)}
+            </option>
+          ))}
+        </select>
+      </div>
+      {selectedDataset && (
+        <p className="mt-2 text-xs text-neutral-500 flex items-center gap-1">
+          <span className="w-1.5 h-1.5 rounded-full bg-accent-500"></span>
+          {getDisplayName(selectedDataset)} dataset selected
+        </p>
+      )}
     </div>
   );
 };
 
 export default DatasetSelector;
-
