@@ -15,26 +15,27 @@ function App() {
   const [models, setModels] = useState([]);
   const [selectedDataset, setSelectedDataset] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
+  const [fineTuned, setFineTuned] = useState(true);
   const [factual, setFactual] = useState(null);
   const [counterfactual, setCounterfactual] = useState(null);
   const [explanation, setExplanation] = useState(null);
+  const [rawOutput, setRawOutput] = useState(null);
+  const [parsedJson, setParsedJson] = useState(null);
   const [featureChanges, setFeatureChanges] = useState({});
   const [targetVariableChange, setTargetVariableChange] = useState({});
+  const [metrics, setMetrics] = useState(null);
   const [loading, setLoading] = useState(false);
   const [loadingExample, setLoadingExample] = useState(false);
   const [loadingCounterfactual, setLoadingCounterfactual] = useState(false);
+  const [loadingModels, setLoadingModels] = useState(false);
   const [error, setError] = useState(null);
-  const [history, setHistory] = useState([]);
   const [isDescriptionModalOpen, setIsDescriptionModalOpen] = useState(false);
 
-  // Load datasets and models on mount
+  // Load datasets on mount
   useEffect(() => {
     const fetchInitialData = async () => {
       try {
-        const [datasetsRes, modelsRes] = await Promise.all([
-          axios.get(`${API_BASE_URL}/api/datasets`),
-          axios.get(`${API_BASE_URL}/api/models`)
-        ]);
+        const datasetsRes = await axios.get(`${API_BASE_URL}/api/datasets`);
         setDatasets(datasetsRes.data.datasets || []);
         const infoMap = {};
         if (datasetsRes.data.dataset_info) {
@@ -43,30 +44,41 @@ function App() {
           });
         }
         setDatasetInfo(infoMap);
-        setModels(modelsRes.data.models || []);
       } catch (err) {
-        setError(`Failed to load datasets/models: ${err.message}`);
+        setError(`Failed to load datasets: ${err.message}`);
         console.error('Error loading initial data:', err);
       }
     };
 
     fetchInitialData();
-
-    const savedHistory = localStorage.getItem('explanationHistory');
-    if (savedHistory) {
-      try {
-        setHistory(JSON.parse(savedHistory));
-      } catch (e) {
-        console.error('Error loading history:', e);
-      }
-    }
   }, []);
 
+  // Load models when dataset changes
   useEffect(() => {
-    if (history.length > 0) {
-      localStorage.setItem('explanationHistory', JSON.stringify(history));
-    }
-  }, [history]);
+    const fetchModels = async () => {
+      if (!selectedDataset) {
+        setModels([]);
+        setSelectedModel('');
+        return;
+      }
+
+      setLoadingModels(true);
+      setError(null);
+      try {
+        const response = await axios.get(`${API_BASE_URL}/api/models/${selectedDataset}`);
+        setModels(response.data.models || []);
+        setSelectedModel(''); // Reset model selection when dataset changes
+      } catch (err) {
+        setError(`Failed to load models: ${err.response?.data?.detail || err.message}`);
+        console.error('Error loading models:', err);
+        setModels([]);
+      } finally {
+        setLoadingModels(false);
+      }
+    };
+
+    fetchModels();
+  }, [selectedDataset]);
 
   // Clear loaded data when dataset changes
   useEffect(() => {
@@ -74,8 +86,12 @@ function App() {
     setFactual(null);
     setCounterfactual(null);
     setExplanation(null);
+    setRawOutput(null);
+    setParsedJson(null);
     setFeatureChanges({});
     setTargetVariableChange({});
+    setMetrics(null);
+    setFineTuned(true); // Reset fine-tuned checkbox to default
     // Don't clear error here as it might be about dataset/model loading
   }, [selectedDataset]);
 
@@ -88,8 +104,11 @@ function App() {
     setLoadingExample(true);
     setError(null);
     setExplanation(null);
+    setRawOutput(null);
+    setParsedJson(null);
     setFeatureChanges({});
     setTargetVariableChange({});
+    setMetrics(null);
 
     try {
       const response = await axios.get(`${API_BASE_URL}/api/examples/${selectedDataset}`);
@@ -112,8 +131,11 @@ function App() {
     setLoadingCounterfactual(true);
     setError(null);
     setExplanation(null);
+    setRawOutput(null);
+    setParsedJson(null);
     setFeatureChanges({});
     setTargetVariableChange({});
+    setMetrics(null);
 
     try {
       const response = await axios.post(
@@ -145,23 +167,18 @@ function App() {
         factual,
         counterfactual,
         use_refiner: false,
+        fine_tuned: fineTuned,
         temperature: 0.6,
         top_p: 0.8,
         max_tokens: 4096
       });
 
       setExplanation(response.data.explanation);
+      setRawOutput(response.data.raw_output || null);
+      setParsedJson(response.data.parsed_json || null);
       setFeatureChanges(response.data.feature_changes || {});
       setTargetVariableChange(response.data.target_variable_change || {});
-
-      const historyEntry = {
-        id: Date.now(),
-        dataset: selectedDataset,
-        model: selectedModel,
-        explanation: response.data.explanation,
-        timestamp: new Date().toISOString()
-      };
-      setHistory(prev => [historyEntry, ...prev].slice(0, 10));
+      setMetrics(response.data.metrics || null);
     } catch (err) {
       setError(`Failed to generate explanation: ${err.response?.data?.detail || err.message}`);
       console.error('Error generating explanation:', err);
@@ -248,9 +265,32 @@ function App() {
                 models={models}
                 selectedModel={selectedModel}
                 onModelChange={setSelectedModel}
-                loading={loading || loadingExample}
+                loading={loading || loadingExample || loadingModels}
               />
             </div>
+
+            {/* Fine-tuned checkbox - only show when model is selected */}
+            {selectedModel && (
+              <div className="mb-6">
+                <label className="flex items-center gap-3 cursor-pointer group">
+                  <input
+                    type="checkbox"
+                    checked={fineTuned}
+                    onChange={(e) => setFineTuned(e.target.checked)}
+                    disabled={loading || loadingExample}
+                    className="w-5 h-5 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-2 focus:ring-accent-500 focus:ring-offset-2 focus:ring-offset-dark-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  />
+                  <span className="text-sm text-neutral-300 group-hover:text-white transition-colors">
+                    Use Fine-tuned Model (LoRA)
+                  </span>
+                </label>
+                <p className="mt-1 text-xs text-neutral-500 ml-8">
+                  {fineTuned 
+                    ? "Using fine-tuned model with LoRA adapter from checkpoint"
+                    : "Using base model without fine-tuning"}
+                </p>
+              </div>
+            )}
 
             <div className="divider mb-6"></div>
 
@@ -361,53 +401,13 @@ function App() {
         <section className="mb-8">
           <ExplanationDisplay
             explanation={explanation}
-            featureChanges={featureChanges}
-            targetVariableChange={targetVariableChange}
+            rawOutput={rawOutput}
+            parsedJson={parsedJson}
+            metrics={metrics}
             loading={loading}
             error={error && !factual ? error : null}
           />
         </section>
-
-        {/* History Section */}
-        {history.length > 0 && (
-          <section className="animate-fade-in">
-            <div className="glass-card rounded-2xl p-6">
-              <div className="flex items-center gap-2 mb-6">
-                <div className="w-8 h-8 rounded-lg bg-dark-700 flex items-center justify-center">
-                  <svg className="w-4 h-4 text-neutral-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                </div>
-                <h2 className="text-lg font-medium text-white">Recent Explanations</h2>
-                <span className="badge badge-neutral ml-2">{history.length}</span>
-              </div>
-              
-              <div className="space-y-3">
-                {history.map((entry, index) => (
-                  <div
-                    key={entry.id}
-                    className="group p-4 rounded-xl bg-dark-800/50 border border-dark-700/50 hover:border-dark-600 hover:bg-dark-750/50 transition-all duration-200 cursor-pointer"
-                    style={{ animationDelay: `${index * 50}ms` }}
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="badge badge-accent">{entry.dataset}</span>
-                        <span className="text-dark-500">•</span>
-                        <span className="text-sm text-neutral-400 font-mono">{entry.model}</span>
-                      </div>
-                      <span className="text-xs text-neutral-600">
-                        {new Date(entry.timestamp).toLocaleString()}
-                      </span>
-                    </div>
-                    <p className="text-sm text-neutral-400 line-clamp-2 group-hover:text-neutral-300 transition-colors">
-                      {entry.explanation}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </section>
-        )}
       </main>
 
       {/* Footer */}

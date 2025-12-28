@@ -19,6 +19,8 @@
 .DS_Store
 *.pem
 
+outputs_unsloth/
+
 # debug
 npm-debug.log*
 yarn-debug.log*

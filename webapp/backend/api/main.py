@@ -53,11 +53,42 @@ async def get_datasets():
 
 
 @app.get("/api/models")
-async def get_models():
-    """Get available models."""
+async def get_all_models():
+    """Get all available models (legacy endpoint for backwards compatibility)."""
     try:
         models = pipeline_service.get_available_models()
         return {"models": models}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/models/{dataset}")
+async def get_models_for_dataset(dataset: str):
+    """
+    Get available fine-tuned models for a specific dataset.
+    Scans the outputs_unsloth folder for available model checkpoints.
+    """
+    try:
+        # Validate dataset
+        available_datasets = pipeline_service.get_available_datasets()
+        if dataset not in available_datasets:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Dataset '{dataset}' not found. Available: {available_datasets}"
+            )
+        
+        # Get models available for this dataset
+        models = pipeline_service.get_available_models_for_dataset(dataset)
+        
+        if not models:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No fine-tuned models found for dataset: {dataset}"
+            )
+        
+        return {"models": models, "dataset": dataset}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -106,6 +137,7 @@ async def explain(request: ExplainRequest):
             factual=request.factual,
             counterfactual=request.counterfactual,
             use_refiner=request.use_refiner,
+            fine_tuned=request.fine_tuned,
             temperature=request.temperature,
             top_p=request.top_p,
             max_tokens=request.max_tokens
@@ -120,4 +152,3 @@ async def explain(request: ExplainRequest):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
