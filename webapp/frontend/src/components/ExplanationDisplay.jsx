@@ -235,7 +235,7 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
 
             {/* Content */}
             <div className="p-6 overflow-y-auto max-h-[calc(85vh-80px)]">
-              <pre className="bg-dark-900 rounded-xl p-4 overflow-x-auto text-sm font-mono text-neutral-300 border border-dark-700 whitespace-pre">
+              <pre className="bg-dark-900 rounded-xl p-4 text-sm font-mono text-neutral-300 border border-dark-700 whitespace-pre-wrap break-words overflow-wrap-anywhere">
                 {JSON.stringify(parsedJson, null, 2)}
               </pre>
             </div>

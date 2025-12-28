@@ -248,13 +248,17 @@ class PipelineService:
         """Get list of available models from MODEL_MAPPING and Gemini."""
         models = []
         
-        # Add vLLM models from MODEL_MAPPING
-        if MODEL_MAPPING:
+        # Add vLLM models from MODEL_MAPPING if CUDA is available
+        if CUDA_AVAILABLE and MODEL_MAPPING:
             models.extend(list(MODEL_MAPPING.keys()))
         
         # Add Gemini model if available
         if GEMINI_AVAILABLE and os.getenv("GOOGLE_API_KEY"):
             models.append(self.GEMINI_MODEL_NAME)
+        
+        # Add demo model if CUDA is not available
+        if not CUDA_AVAILABLE:
+            models.append("demo")
         
         return models
     
@@ -617,6 +621,113 @@ class PipelineService:
             if llm is not None:
                 self._unload_vllm_model(llm)
     
+    def _generate_dummy_explanation(
+        self,
+        factual: Dict[str, Any],
+        counterfactual: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Generate a dummy example explanation when CUDA/GPU is not available.
+        This mimics the structure of a real explanation with reasoning in <think> tags.
+        """
+        # Calculate feature changes
+        feature_changes = self._calculate_feature_changes(factual, counterfactual)
+        target_variable_change = self._extract_target_change(factual, counterfactual)
+        
+        # Create dummy feature names if needed
+        feature_names = list(feature_changes.keys())
+        if not feature_names:
+            feature_names = ["feature_1", "feature_2", "feature_3"]
+            feature_changes = {
+                "feature_1": {"factual": "value_A", "counterfactual": "value_B"},
+                "feature_2": {"factual": 10, "counterfactual": 15},
+                "feature_3": {"factual": "category_X", "counterfactual": "category_Y"}
+            }
+        
+        # Create reasoning text for the redacted_reasoning section
+        reasoning_text = """I need to analyze the differences between the factual and counterfactual examples. Let me identify the key feature changes:
+
+1. The first feature changed from its original value to a new value, which likely has a significant impact on the model's prediction.
+2. The second feature shows a numerical increase, suggesting a quantitative shift that could influence the outcome.
+3. The third feature represents a categorical change that may interact with other features.
+
+Based on these changes, I can see that the combination of modifications creates a shift in the model's decision boundary. The most influential change appears to be the first feature, as it represents a fundamental alteration in the input characteristics. The numerical increase in the second feature amplifies this effect, while the categorical change in the third feature provides additional context that supports the classification shift.
+
+The interaction between these features suggests that the model's decision is not based on a single factor but rather on the combined effect of multiple feature modifications. This aligns with the complex nature of machine learning models that consider multiple dimensions simultaneously."""
+        
+        # Create the narrative explanation text
+        narrative_explanation = f"""The transition from the factual to the counterfactual instance reveals several key modifications that collectively influence the model's classification decision. The primary driver of this change appears to be the alteration in {feature_names[0] if feature_names else 'the primary feature'}, which shifted from its original state to a modified configuration. This fundamental change establishes the foundation for the subsequent classification shift.
+
+Accompanying this primary modification, the numerical adjustment in {feature_names[1] if len(feature_names) > 1 else 'a secondary feature'} further reinforces the directional change in the model's prediction. The quantitative increase represents a meaningful shift that amplifies the impact of the primary feature modification. Additionally, the categorical transformation observed in {feature_names[2] if len(feature_names) > 2 else 'another feature'} provides contextual support for the overall classification change.
+
+The interaction between these modified features demonstrates the model's sensitivity to multi-dimensional changes. Rather than relying on a single factor, the classification outcome emerges from the combined effect of these interconnected modifications. This pattern highlights the complexity of the decision boundary and illustrates how seemingly independent feature changes can collectively produce a significant shift in the model's prediction.
+
+The resulting classification change reflects the model's learned patterns that associate these specific feature combinations with the observed outcome. Understanding these relationships provides valuable insight into the model's decision-making process and the relative importance of different feature modifications in driving classification changes."""
+        
+        # Create importance ranking
+        features_importance_ranking = {}
+        for i, feature in enumerate(feature_names[:5]):  # Limit to 5 features
+            # Create some variation in rankings (some tied ranks)
+            if i < 2:
+                features_importance_ranking[feature] = "1"
+            elif i < 4:
+                features_importance_ranking[feature] = "2"
+            else:
+                features_importance_ranking[feature] = "3"
+        
+        # Format feature_changes as a list of dicts (matching the prompt structure)
+        feature_changes_list = []
+        for feature_name, change in feature_changes.items():
+            feature_changes_list.append({feature_name: change})
+        
+        # Format target_variable_change to match prompt structure (just factual/counterfactual, no variable key)
+        if target_variable_change and "factual" in target_variable_change and "counterfactual" in target_variable_change:
+            target_var_change = {
+                "factual": target_variable_change["factual"],
+                "counterfactual": target_variable_change["counterfactual"]
+            }
+        else:
+            target_var_change = {"factual": "class_A", "counterfactual": "class_B"}
+        
+        # Create the JSON structure matching the prompt format
+        json_structure = {
+            "feature_changes": feature_changes_list,
+            "target_variable_change": target_var_change,
+            "reasoning": reasoning_text,
+            "features_importance_ranking": features_importance_ranking,
+            "explanation": narrative_explanation
+        }
+        
+        # Create the full raw output with redacted_reasoning and JSON block (matching real LLM output)
+        raw_output = f"""<think>
+{reasoning_text}
+</think>
+```json
+{json.dumps(json_structure, indent=2)}
+```"""
+        
+        # Create metrics for demo mode (all successful)
+        from api.models import MetricsResponse
+        metrics = MetricsResponse(
+            json_parsing_success=True,
+            pff=True,  # Perfect Feature Field - demo has all features
+            tf=True,   # Target Field - demo has target change
+            avg_ff=1.0  # Average Feature Field - perfect score for demo
+        )
+        
+        return {
+            "explanation": narrative_explanation,  # Just the narrative text
+            "raw_output": raw_output,  # Full output with redacted_reasoning and JSON
+            "parsed_json": json_structure,  # The parsed JSON object
+            "feature_changes": feature_changes,
+            "target_variable_change": target_variable_change,
+            "reasoning": reasoning_text,
+            "features_importance_ranking": features_importance_ranking,
+            "metrics": metrics,
+            "status": "demo",
+            "warning": "You need GPU CUDA to run models locally. This is just an output example."
+        }
+    
     def generate_explanation(
         self,
         dataset: str,
@@ -646,6 +757,11 @@ class PipelineService:
         Returns:
             Dictionary with explanation, feature_changes, target_variable_change, metrics, etc.
         """
+        # Check if this is the demo model
+        if model == "demo":
+            print("⚠️ Using demo mode. Returning example output.")
+            return self._generate_dummy_explanation(factual, counterfactual)
+        
         try:
             # Format prompt using the prompt template from llm_kd
             try:

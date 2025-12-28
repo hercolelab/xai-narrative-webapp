@@ -34,6 +34,7 @@ class ExplainResponse(BaseModel):
     reasoning: Optional[str] = Field(default=None, description="Reasoning if available")
     metrics: Optional[MetricsResponse] = Field(default=None, description="Inference metrics")
     status: str = Field(default="success", description="Status of the request")
+    warning: Optional[str] = Field(default=None, description="Warning message if this is a demo/example")
 
 
 class ErrorResponse(BaseModel):

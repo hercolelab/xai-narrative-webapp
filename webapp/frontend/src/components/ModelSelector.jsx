@@ -3,11 +3,19 @@ import React from 'react';
 const ModelSelector = ({ models, selectedModel, onModelChange, loading }) => {
   const getModelIcon = (model) => {
     const lower = model?.toLowerCase() || '';
+    if (lower === 'demo') return '🎭';
     if (lower.includes('gpt')) return '🧠';
     if (lower.includes('claude')) return '🤖';
     if (lower.includes('gemini')) return '✨';
     if (lower.includes('llama')) return '🦙';
     return '⚡';
+  };
+  
+  const getModelLabel = (model) => {
+    if (model?.toLowerCase() === 'demo') {
+      return '🎭 Demo (Example Output)';
+    }
+    return model;
   };
 
   return (
@@ -29,7 +37,7 @@ const ModelSelector = ({ models, selectedModel, onModelChange, loading }) => {
           <option value="">Select a model...</option>
           {models.map((model) => (
             <option key={model} value={model}>
-              {getModelIcon(model)} {model}
+              {getModelLabel(model)}
             </option>
           ))}
         </select>

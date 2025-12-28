@@ -24,6 +24,8 @@ function App() {
   const [featureChanges, setFeatureChanges] = useState({});
   const [targetVariableChange, setTargetVariableChange] = useState({});
   const [metrics, setMetrics] = useState(null);
+  const [warning, setWarning] = useState(null); // Model warning (CUDA, no models found, etc.)
+  const [demoWarning, setDemoWarning] = useState(null); // Demo/example warning (after generation)
   const [loading, setLoading] = useState(false);
   const [loadingExample, setLoadingExample] = useState(false);
   const [loadingCounterfactual, setLoadingCounterfactual] = useState(false);
@@ -64,14 +66,35 @@ function App() {
 
       setLoadingModels(true);
       setError(null);
+      setWarning(null);
       try {
         const response = await axios.get(`${API_BASE_URL}/api/models/${selectedDataset}`);
         setModels(response.data.models || []);
         setSelectedModel(''); // Reset model selection when dataset changes
+        
+        // Show warning if present (not an error)
+        if (response.data.warning) {
+          setWarning(response.data.warning);
+        }
       } catch (err) {
-        setError(`Failed to load models: ${err.response?.data?.detail || err.message}`);
+        // Only show as error if it's a real error (not just no models found)
+        if (err.response?.status === 404 && err.response?.data?.detail?.includes("not found")) {
+          // Dataset not found is an error
+          setError(`Failed to load models: ${err.response?.data?.detail || err.message}`);
+          setModels([]);
+        } else {
+          // Other errors - show as warning if it's about missing models
+          const detail = err.response?.data?.detail || err.message;
+          if (detail.includes("No fine-tuned models")) {
+            setWarning(detail + " Demo model is available for testing.");
+            // Still try to set demo model if available
+            setModels(["demo"]);
+          } else {
+            setError(`Failed to load models: ${detail}`);
+            setModels([]);
+          }
+        }
         console.error('Error loading models:', err);
-        setModels([]);
       } finally {
         setLoadingModels(false);
       }
@@ -91,6 +114,8 @@ function App() {
     setFeatureChanges({});
     setTargetVariableChange({});
     setMetrics(null);
+    setDemoWarning(null); // Clear demo warning when dataset changes
+    // Don't clear model warning here - it will be updated when models are loaded
     setFineTuned(true); // Reset fine-tuned checkbox to default
     // Don't clear error here as it might be about dataset/model loading
   }, [selectedDataset]);
@@ -109,6 +134,7 @@ function App() {
     setFeatureChanges({});
     setTargetVariableChange({});
     setMetrics(null);
+    // Don't clear warning - it should persist throughout the process
 
     try {
       const response = await axios.get(`${API_BASE_URL}/api/examples/${selectedDataset}`);
@@ -136,6 +162,7 @@ function App() {
     setFeatureChanges({});
     setTargetVariableChange({});
     setMetrics(null);
+    // Don't clear warning - it should persist throughout the process
 
     try {
       const response = await axios.post(
@@ -159,6 +186,7 @@ function App() {
 
     setLoading(true);
     setError(null);
+    // Don't clear warning - it should persist throughout the process
 
     try {
       const response = await axios.post(`${API_BASE_URL}/api/explain`, {
@@ -179,6 +207,8 @@ function App() {
       setFeatureChanges(response.data.feature_changes || {});
       setTargetVariableChange(response.data.target_variable_change || {});
       setMetrics(response.data.metrics || null);
+      // Set demo warning separately (don't overwrite model warning)
+      setDemoWarning(response.data.warning || null);
     } catch (err) {
       setError(`Failed to generate explanation: ${err.response?.data?.detail || err.message}`);
       console.error('Error generating explanation:', err);
@@ -388,6 +418,25 @@ function App() {
           </div>
         )}
 
+        {/* Model Warning Display */}
+        {warning && (
+          <div className="mb-6 animate-fade-in-down">
+            <div className="glass-card rounded-xl p-4 border-l-4 border-yellow-500/80 bg-yellow-950/20">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-yellow-500/10 flex items-center justify-center flex-shrink-0">
+                  <svg className="h-4 w-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div>
+                  <h4 className="text-sm font-medium text-yellow-300">Warning</h4>
+                  <p className="text-sm text-yellow-400/80 mt-0.5">{warning}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Data Display */}
         <section className="mb-8">
           <DataDisplay
@@ -396,6 +445,25 @@ function App() {
             loading={loadingExample}
           />
         </section>
+
+        {/* Demo/Example Warning Display */}
+        {demoWarning && (
+          <div className="mb-6 animate-fade-in-down">
+            <div className="glass-card rounded-xl p-4 border-l-4 border-yellow-500/80 bg-yellow-950/20">
+              <div className="flex items-start gap-3">
+                <div className="w-8 h-8 rounded-lg bg-yellow-500/10 flex items-center justify-center flex-shrink-0">
+                  <svg className="h-4 w-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                </div>
+                <div>
+                  <h4 className="text-sm font-medium text-yellow-300">Demo Mode</h4>
+                  <p className="text-sm text-yellow-400/80 mt-0.5">{demoWarning}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Explanation Display */}
         <section className="mb-8">

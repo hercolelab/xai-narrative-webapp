@@ -67,6 +67,7 @@ async def get_models_for_dataset(dataset: str):
     """
     Get available fine-tuned models for a specific dataset.
     Scans the outputs_unsloth folder for available model checkpoints.
+    Includes demo model if CUDA is not available or no models found.
     """
     try:
         # Validate dataset
@@ -80,13 +81,28 @@ async def get_models_for_dataset(dataset: str):
         # Get models available for this dataset
         models = pipeline_service.get_available_models_for_dataset(dataset)
         
-        if not models:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No fine-tuned models found for dataset: {dataset}"
-            )
+        # Check CUDA availability
+        try:
+            import torch
+            CUDA_AVAILABLE = torch.cuda.is_available()
+        except ImportError:
+            CUDA_AVAILABLE = False
         
-        return {"models": models, "dataset": dataset}
+        # Add demo model if CUDA is not available or no models found
+        warning = None
+        if not CUDA_AVAILABLE or not models:
+            if "demo" not in models:
+                models.append("demo")
+            if not CUDA_AVAILABLE:
+                warning = "CUDA is not available. Demo model is available for testing."
+            elif not models or len(models) == 1:  # Only demo model
+                warning = f"No fine-tuned models found for dataset: {dataset}. Demo model is available for testing."
+        
+        response = {"models": models, "dataset": dataset}
+        if warning:
+            response["warning"] = warning
+        
+        return response
     except HTTPException:
         raise
     except Exception as e:
