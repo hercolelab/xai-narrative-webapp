@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import DatasetSelector from './components/DatasetSelector';
 import ModelSelector from './components/ModelSelector';
+import TypeSelector from './components/TypeSelector';
 import DataDisplay from './components/DataDisplay';
 import ExplanationDisplay from './components/ExplanationDisplay';
 import DatasetDescriptionModal from './components/DatasetDescriptionModal';
@@ -10,11 +11,18 @@ import './App.css';
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 function App() {
+  // Theme state - default to dark mode
+  const [isLightMode, setIsLightMode] = useState(() => {
+    const saved = localStorage.getItem('theme');
+    return saved === 'light';
+  });
+
   const [datasets, setDatasets] = useState([]);
   const [datasetInfo, setDatasetInfo] = useState({});
   const [models, setModels] = useState([]);
   const [selectedDataset, setSelectedDataset] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
+  const [generationType, setGenerationType] = useState('');
   const [fineTuned, setFineTuned] = useState(true);
   const [factual, setFactual] = useState(null);
   const [counterfactual, setCounterfactual] = useState(null);
@@ -24,14 +32,25 @@ function App() {
   const [featureChanges, setFeatureChanges] = useState({});
   const [targetVariableChange, setTargetVariableChange] = useState({});
   const [metrics, setMetrics] = useState(null);
+  const [drafts, setDrafts] = useState([]); // Draft statuses for self-refinement mode
+  const [ncs, setNcs] = useState(null); // Narrative Consensus Score
   const [warning, setWarning] = useState(null); // Model warning (CUDA, no models found, etc.)
-  const [demoWarning, setDemoWarning] = useState(null); // Demo/example warning (after generation)
   const [loading, setLoading] = useState(false);
   const [loadingExample, setLoadingExample] = useState(false);
   const [loadingCounterfactual, setLoadingCounterfactual] = useState(false);
   const [loadingModels, setLoadingModels] = useState(false);
   const [error, setError] = useState(null);
   const [isDescriptionModalOpen, setIsDescriptionModalOpen] = useState(false);
+
+  // Apply theme to document
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', isLightMode ? 'light' : 'dark');
+    localStorage.setItem('theme', isLightMode ? 'light' : 'dark');
+  }, [isLightMode]);
+
+  const toggleTheme = () => {
+    setIsLightMode(!isLightMode);
+  };
 
   // Load datasets on mount
   useEffect(() => {
@@ -74,7 +93,12 @@ function App() {
         
         // Show warning if present (not an error)
         if (response.data.warning) {
-          setWarning(response.data.warning);
+          // If it's a CUDA warning, add the template explanation note
+          if (response.data.warning.toLowerCase().includes('cuda')) {
+            setWarning("CUDA is not available. The generated explanation is just a template.");
+          } else {
+            setWarning(response.data.warning);
+          }
         }
       } catch (err) {
         // Only show as error if it's a real error (not just no models found)
@@ -114,7 +138,9 @@ function App() {
     setFeatureChanges({});
     setTargetVariableChange({});
     setMetrics(null);
-    setDemoWarning(null); // Clear demo warning when dataset changes
+    setDrafts([]);
+    setNcs(null);
+    setGenerationType('');
     // Don't clear model warning here - it will be updated when models are loaded
     setFineTuned(true); // Reset fine-tuned checkbox to default
     // Don't clear error here as it might be about dataset/model loading
@@ -184,36 +210,122 @@ function App() {
       return;
     }
 
+    if (!generationType) {
+      setError('Please select a generation type in the Configuration panel');
+      return;
+    }
+
     setLoading(true);
     setError(null);
+    setDrafts([]);
+    setNcs(null);
     // Don't clear warning - it should persist throughout the process
 
-    try {
-      const response = await axios.post(`${API_BASE_URL}/api/explain`, {
-        dataset: selectedDataset,
-        model: selectedModel,
-        factual,
-        counterfactual,
-        use_refiner: false,
-        fine_tuned: fineTuned,
-        temperature: 0.6,
-        top_p: 0.8,
-        max_tokens: 4096
-      });
+    // Use streaming endpoint for self-refinement mode
+    if (generationType === 'self-refinement') {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/explain/stream`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            dataset: selectedDataset,
+            model: selectedModel,
+            factual,
+            counterfactual,
+            generation_type: generationType,
+            fine_tuned: fineTuned,
+            temperature: 0.6,
+            top_p: 0.8,
+            max_tokens: 4096
+          })
+        });
 
-      setExplanation(response.data.explanation);
-      setRawOutput(response.data.raw_output || null);
-      setParsedJson(response.data.parsed_json || null);
-      setFeatureChanges(response.data.feature_changes || {});
-      setTargetVariableChange(response.data.target_variable_change || {});
-      setMetrics(response.data.metrics || null);
-      // Set demo warning separately (don't overwrite model warning)
-      setDemoWarning(response.data.warning || null);
-    } catch (err) {
-      setError(`Failed to generate explanation: ${err.response?.data?.detail || err.message}`);
-      console.error('Error generating explanation:', err);
-    } finally {
-      setLoading(false);
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.detail || 'Failed to generate explanation');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || ''; // Keep incomplete line in buffer
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                
+                if (data.type === 'draft_progress') {
+                  // Update draft status
+                  setDrafts(prev => {
+                    const newDrafts = [...prev];
+                    newDrafts[data.index] = {
+                      status: data.status,
+                      ranking: data.ranking
+                    };
+                    return newDrafts;
+                  });
+                } else if (data.type === 'complete') {
+                  // Final result
+                  setExplanation(data.explanation);
+                  setRawOutput(data.raw_output || null);
+                  setParsedJson(data.parsed_json || null);
+                  setFeatureChanges(data.feature_changes || {});
+                  setTargetVariableChange(data.target_variable_change || {});
+                  setMetrics(data.metrics || null);
+                  setNcs(data.ncs);
+                  setDrafts(data.drafts || []);
+                } else if (data.type === 'error') {
+                  throw new Error(data.message);
+                }
+              } catch (parseErr) {
+                console.error('Error parsing SSE data:', parseErr);
+              }
+            }
+          }
+        }
+      } catch (err) {
+        setError(`Failed to generate explanation: ${err.message}`);
+        console.error('Error generating explanation:', err);
+      } finally {
+        setLoading(false);
+      }
+    } else {
+      // One-shot mode - use regular endpoint
+      try {
+        const response = await axios.post(`${API_BASE_URL}/api/explain`, {
+          dataset: selectedDataset,
+          model: selectedModel,
+          factual,
+          counterfactual,
+          generation_type: generationType,
+          fine_tuned: fineTuned,
+          temperature: 0.6,
+          top_p: 0.8,
+          max_tokens: 4096
+        });
+
+        setExplanation(response.data.explanation);
+        setRawOutput(response.data.raw_output || null);
+        setParsedJson(response.data.parsed_json || null);
+        setFeatureChanges(response.data.feature_changes || {});
+        setTargetVariableChange(response.data.target_variable_change || {});
+        setMetrics(response.data.metrics || null);
+      } catch (err) {
+        setError(`Failed to generate explanation: ${err.response?.data?.detail || err.message}`);
+        console.error('Error generating explanation:', err);
+      } finally {
+        setLoading(false);
+      }
     }
   };
 
@@ -225,15 +337,9 @@ function App() {
   );
 
   return (
-    <div className="min-h-screen bg-dark-950 bg-grid">
-      {/* Background gradient effects */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute -top-40 -right-40 w-80 h-80 bg-accent-500/10 rounded-full blur-3xl"></div>
-        <div className="absolute top-1/3 -left-40 w-60 h-60 bg-accent-600/5 rounded-full blur-3xl"></div>
-      </div>
-
+    <div className="min-h-screen theme-container">
       {/* Header */}
-      <header className="relative border-b border-dark-800/80 bg-dark-900/50 backdrop-blur-xl sticky top-0 z-50">
+      <header className="relative border-b border-dark-800/80 bg-dark-900/50 backdrop-blur-xl theme-header">
         <div className="max-w-7xl mx-auto px-6 lg:px-8 py-6">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
@@ -247,24 +353,35 @@ function App() {
                 <img 
                   src="/hercolelab_white.png" 
                   alt="HERCOLE Lab" 
-                  className="h-10 w-auto"
+                  className="h-[50px] w-auto theme-logo"
                 />
               </a>
-              <div className="border-l border-dark-700 pl-4">
-                <h1 className="text-xl font-semibold text-white tracking-tight">
-                  Counterfactual Narrative Generator
+              <div className="border-l pl-4 theme-header-divider">
+                <h1 className="text-xl font-semibold text-white tracking-tight theme-title">
+                  Counterfactual Narrative Explanation System
                 </h1>
-                <p className="text-sm text-neutral-500 mt-0.5">
+                <p className="text-sm mt-0.5 theme-subtitle">
                   Translating technical counterfactual explanations into natural language via SLMs
                 </p>
               </div>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="badge badge-accent">
-                <span className="w-1.5 h-1.5 rounded-full bg-accent-400 mr-1.5 animate-pulse"></span>
-                Live
-              </span>
-            </div>
+            {/* Light Mode Toggle Button */}
+            <button
+              onClick={toggleTheme}
+              className="flex items-center justify-center w-10 h-10 rounded-lg bg-dark-750 hover:bg-dark-700 border border-dark-600 hover:border-dark-500 text-neutral-300 hover:text-white transition-all duration-200 active:scale-95 theme-toggle-btn"
+              aria-label={isLightMode ? 'Switch to dark mode' : 'Switch to light mode'}
+              title={isLightMode ? 'Switch to dark mode' : 'Switch to light mode'}
+            >
+              {isLightMode ? (
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                </svg>
+              ) : (
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+                </svg>
+              )}
+            </button>
           </div>
         </div>
       </header>
@@ -275,7 +392,7 @@ function App() {
           <div className="glass-card rounded-2xl p-6">
             <div className="flex items-center gap-2 mb-6">
               <div className="w-8 h-8 rounded-lg bg-dark-700 flex items-center justify-center">
-                <svg className="w-4 h-4 text-accent-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-4 h-4 theme-accent-text" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
@@ -283,7 +400,7 @@ function App() {
               <h2 className="text-lg font-medium text-white">Configuration</h2>
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
               <DatasetSelector
                 datasets={datasets}
                 datasetInfo={datasetInfo}
@@ -297,6 +414,11 @@ function App() {
                 onModelChange={setSelectedModel}
                 loading={loading || loadingExample || loadingModels}
               />
+              <TypeSelector
+                selectedType={generationType}
+                onTypeChange={setGenerationType}
+                loading={loading || loadingExample}
+              />
             </div>
 
             {/* Fine-tuned checkbox - only show when model is selected */}
@@ -308,7 +430,7 @@ function App() {
                     checked={fineTuned}
                     onChange={(e) => setFineTuned(e.target.checked)}
                     disabled={loading || loadingExample}
-                    className="w-5 h-5 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-2 focus:ring-accent-500 focus:ring-offset-2 focus:ring-offset-dark-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="w-5 h-5 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-2 focus:ring-accent-500 focus:ring-offset-2 focus:ring-offset-dark-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed theme-checkbox"
                   />
                   <span className="text-sm text-neutral-300 group-hover:text-white transition-colors">
                     Use Fine-tuned Model (LoRA)
@@ -378,7 +500,14 @@ function App() {
               
               <button
                 onClick={handleGenerateExplanation}
-                disabled={!selectedDataset || !selectedModel || !factual || !counterfactual || loading}
+                disabled={
+                  !selectedDataset ||
+                  !selectedModel ||
+                  !factual ||
+                  !counterfactual ||
+                  !generationType ||
+                  loading
+                }
                 className="btn btn-primary"
               >
                 {loading ? (
@@ -421,16 +550,16 @@ function App() {
         {/* Model Warning Display */}
         {warning && (
           <div className="mb-6 animate-fade-in-down">
-            <div className="glass-card rounded-xl p-4 border-l-4 border-yellow-500/80 bg-yellow-950/20">
+            <div className="glass-card rounded-xl p-4 border-l-4 theme-warning-border theme-warning-bg">
               <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-yellow-500/10 flex items-center justify-center flex-shrink-0">
-                  <svg className="h-4 w-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
+                <div className="w-8 h-8 rounded-lg theme-warning-icon-bg flex items-center justify-center flex-shrink-0">
+                  <svg className="h-4 w-4 theme-warning-icon" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
                   </svg>
                 </div>
                 <div>
-                  <h4 className="text-sm font-medium text-yellow-300">Warning</h4>
-                  <p className="text-sm text-yellow-400/80 mt-0.5">{warning}</p>
+                  <h4 className="text-sm font-medium theme-warning-title">Warning</h4>
+                  <p className="text-sm theme-warning-text mt-0.5">{warning}</p>
                 </div>
               </div>
             </div>
@@ -443,27 +572,9 @@ function App() {
             factual={factual}
             counterfactual={counterfactual}
             loading={loadingExample}
+            onOpenDatasetDescription={() => setIsDescriptionModalOpen(true)}
           />
         </section>
-
-        {/* Demo/Example Warning Display */}
-        {demoWarning && (
-          <div className="mb-6 animate-fade-in-down">
-            <div className="glass-card rounded-xl p-4 border-l-4 border-yellow-500/80 bg-yellow-950/20">
-              <div className="flex items-start gap-3">
-                <div className="w-8 h-8 rounded-lg bg-yellow-500/10 flex items-center justify-center flex-shrink-0">
-                  <svg className="h-4 w-4 text-yellow-400" fill="currentColor" viewBox="0 0 20 20">
-                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                  </svg>
-                </div>
-                <div>
-                  <h4 className="text-sm font-medium text-yellow-300">Demo Mode</h4>
-                  <p className="text-sm text-yellow-400/80 mt-0.5">{demoWarning}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
 
         {/* Explanation Display */}
         <section className="mb-8">
@@ -474,6 +585,9 @@ function App() {
             metrics={metrics}
             loading={loading}
             error={error && !factual ? error : null}
+            drafts={drafts}
+            ncs={ncs}
+            generationType={generationType}
           />
         </section>
       </main>
@@ -494,7 +608,7 @@ function App() {
                 className="h-6 w-auto opacity-60"
               />
               <span className="text-sm text-neutral-500">
-                Counterfactual Narrative Generator
+                Counterfactual Narrative Explanation System
               </span>
             </a>
             <p className="text-sm text-neutral-600">
@@ -503,7 +617,7 @@ function App() {
                 href="https://hercolelab.netlify.app/" 
                 target="_blank" 
                 rel="noopener noreferrer"
-                className="text-accent-400 hover:text-accent-300 transition-colors"
+                className="theme-accent-text hover:opacity-80 transition-colors"
               >
                 HERCOLE Lab
               </a>

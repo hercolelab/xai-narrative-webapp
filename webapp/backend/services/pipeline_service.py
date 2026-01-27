@@ -5,7 +5,9 @@ import json
 import ast
 import random
 import re
-from typing import Dict, Any, Optional, List, Tuple
+import time
+import math
+from typing import Dict, Any, Optional, List, Tuple, Generator
 from pathlib import Path
 
 # Add paths to import from llm_kd
@@ -82,6 +84,203 @@ except ImportError:
     print("Warning: google-generativeai not available. Gemini models will not work.")
     GEMINI_AVAILABLE = False
     genai = None
+
+
+# Constants for self-refinement mode
+NUM_NARRATIVES = 5
+MAX_ATTEMPTS = 2
+NCS_ALPHA = 0.6
+
+
+# ============================================================================
+# NCS (Narrative Consensus Score) Computation Functions
+# ============================================================================
+
+def compute_jaccard_similarity(dict1: Dict[str, int], dict2: Dict[str, int]) -> float:
+    """
+    Compute Jaccard similarity between two dictionaries based on their keys (feature names).
+    
+    J(A, B) = |A ∩ B| / |A ∪ B|
+    
+    Returns:
+        float: Jaccard similarity in [0, 1]. Two empty dicts have similarity 1.0.
+    """
+    set1 = set(dict1.keys()) if dict1 else set()
+    set2 = set(dict2.keys()) if dict2 else set()
+    # Handle empty dicts: two empty dicts have similarity 1.0, empty and non-empty have 0.0
+    if not set1 and not set2:
+        return 1.0
+    if not set1 or not set2:
+        return 0.0
+    intersection = len(set1 & set2)
+    union = len(set1 | set2)
+    return intersection / union if union > 0 else 0.0
+
+
+def compute_kendall_tau_normalized(dict1: Dict[str, int], dict2: Dict[str, int]) -> float:
+    """
+    Compute Kendall's tau between two rankings and normalize to [0, 1] as (tau + 1) / 2.
+    
+    Args:
+        dict1: First ranking {feature_name: rank}
+        dict2: Second ranking {feature_name: rank}
+    
+    Returns:
+        float: Normalized Kendall's tau in [0, 1], or 0.5 if computation fails.
+    """
+    if not dict1 or not dict2:
+        return 0.5  # Neutral value when computation not possible
+    
+    # Get common features (case-insensitive matching)
+    dict1_lower = {k.lower(): v for k, v in dict1.items()}
+    dict2_lower = {k.lower(): v for k, v in dict2.items()}
+    common_features = set(dict1_lower.keys()) & set(dict2_lower.keys())
+    
+    if len(common_features) < 2:
+        return 0.5  # Need at least 2 features for correlation
+    
+    # Build rank lists
+    ranks1 = []
+    ranks2 = []
+    for feat in sorted(common_features):
+        ranks1.append(dict1_lower[feat])
+        ranks2.append(dict2_lower[feat])
+    
+    # Try scipy first
+    try:
+        from scipy.stats import kendalltau
+        import numpy as np
+        tau, _ = kendalltau(ranks1, ranks2)
+        if np.isnan(tau):
+            return 0.5
+        # Normalize to [0, 1]
+        return (tau + 1) / 2
+    except ImportError:
+        pass
+    except Exception:
+        pass
+    
+    # Manual implementation fallback
+    try:
+        n = len(ranks1)
+        concordant = 0
+        discordant = 0
+        
+        for i in range(n):
+            for j in range(i + 1, n):
+                diff1 = ranks1[i] - ranks1[j]
+                diff2 = ranks2[i] - ranks2[j]
+                sign1 = 1 if diff1 > 0 else (-1 if diff1 < 0 else 0)
+                sign2 = 1 if diff2 > 0 else (-1 if diff2 < 0 else 0)
+                if sign1 * sign2 > 0:
+                    concordant += 1
+                elif sign1 * sign2 < 0:
+                    discordant += 1
+        
+        total = concordant + discordant
+        if total == 0:
+            return 0.5
+        
+        tau = (concordant - discordant) / total
+        return (tau + 1) / 2
+    except Exception:
+        return 0.5
+
+
+def compute_pairwise_coherence_score(
+    dict1: Dict[str, int],
+    dict2: Dict[str, int],
+    alpha: float = 0.6
+) -> float:
+    """
+    Compute pairwise coherence score S(e_i, e_j) between two feature importance rankings.
+    
+    S(e_i, e_j) = J(e_i, e_j)^alpha * ((tau(e_i, e_j) + 1) / 2)^(1-alpha)
+    
+    Args:
+        dict1: First ranking {feature_name: rank}
+        dict2: Second ranking {feature_name: rank}
+        alpha: Weight for Jaccard similarity (default 0.6)
+    
+    Returns:
+        float: Pairwise coherence score in [0, 1]
+    """
+    jaccard = compute_jaccard_similarity(dict1, dict2)
+    tau_normalized = compute_kendall_tau_normalized(dict1, dict2)
+    
+    # S = J^alpha * tau_norm^(1-alpha)
+    score = (jaccard ** alpha) * (tau_normalized ** (1 - alpha))
+    return score
+
+
+def compute_narrative_coherence_score(
+    rankings: List[Dict[str, int]],
+    alpha: float = 0.6
+) -> float:
+    """
+    Compute Narrative Coherence Score (NCS) for a set of feature importance rankings.
+    
+    NCS = (2 / N(N-1)) * sum_{i<j} S(e_i, e_j)
+    
+    Args:
+        rankings: List of ranking dictionaries {feature_name: rank}
+        alpha: Weight for Jaccard similarity in pairwise score (default 0.6)
+    
+    Returns:
+        float: NCS in [0, 1], or NaN if not enough rankings
+    """
+    # Filter out None rankings
+    valid_rankings = [r for r in rankings if r is not None and len(r) > 0]
+    n = len(valid_rankings)
+    
+    if n < 2:
+        return float("nan")
+    
+    # Compute sum of pairwise coherence scores
+    total_score = 0.0
+    num_pairs = 0
+    
+    for i in range(n):
+        for j in range(i + 1, n):
+            score = compute_pairwise_coherence_score(valid_rankings[i], valid_rankings[j], alpha)
+            total_score += score
+            num_pairs += 1
+    
+    # NCS = (2 / N(N-1)) * sum = sum / num_pairs
+    if num_pairs == 0:
+        return float("nan")
+    
+    ncs = total_score / num_pairs
+    return ncs
+
+
+def parse_ranking_from_json(parsed_json: Optional[Dict[str, Any]]) -> Optional[Dict[str, int]]:
+    """
+    Extract and normalize the features_importance_ranking from parsed JSON.
+    
+    Args:
+        parsed_json: Parsed JSON from LLM output
+    
+    Returns:
+        Dict[str, int] with feature names as keys and integer ranks as values, or None
+    """
+    if not parsed_json:
+        return None
+    
+    ranking = parsed_json.get("features_importance_ranking", {})
+    if not ranking or not isinstance(ranking, dict):
+        return None
+    
+    # Convert string ranks to integers
+    normalized = {}
+    for feature, rank in ranking.items():
+        try:
+            normalized[feature.lower().strip()] = int(rank)
+        except (ValueError, TypeError):
+            # Skip invalid rankings
+            continue
+    
+    return normalized if normalized else None
 
 
 class PipelineService:
@@ -1117,6 +1316,254 @@ Your response MUST be a valid JSON object with the following structure:
 
 Explanation:"""
         return prompt
+    
+    def generate_self_refinement(
+        self,
+        dataset: str,
+        model: str,
+        factual: Dict[str, Any],
+        counterfactual: Dict[str, Any],
+        fine_tuned: bool = True,
+        temperature: float = 0.6,
+        top_p: float = 0.8,
+        max_tokens: int = 4096
+    ) -> Generator[Dict[str, Any], None, None]:
+        """
+        Generate explanation using self-refinement mode with multiple drafts.
+        
+        This is a generator that yields progress updates for each draft,
+        then yields the final result.
+        
+        Yields:
+            Dict with 'type' key:
+            - 'draft_progress': {index, status, ranking}
+            - 'complete': {explanation, metrics, ncs, drafts, ...}
+            - 'error': {message}
+        """
+        # Check if this is demo mode
+        if model == "demo":
+            yield from self._generate_self_refinement_demo(factual, counterfactual)
+            return
+        
+        try:
+            # Format prompt
+            try:
+                prompt_text = self._format_prompt(factual, counterfactual, dataset)
+            except Exception as e:
+                print(f"Error formatting prompt: {e}")
+                prompt_text = self._format_fallback_prompt(factual, counterfactual, dataset)
+            
+            drafts = []
+            rankings = []
+            
+            # Generate NUM_NARRATIVES drafts
+            for draft_idx in range(NUM_NARRATIVES):
+                # Yield loading status
+                yield {
+                    "type": "draft_progress",
+                    "index": draft_idx,
+                    "status": "loading",
+                    "ranking": None
+                }
+                
+                draft_result = None
+                draft_ranking = None
+                
+                # Try up to MAX_ATTEMPTS times
+                for attempt in range(MAX_ATTEMPTS):
+                    try:
+                        if self._is_gemini_model(model):
+                            generated_text = self._generate_with_gemini(
+                                prompt_text,
+                                model_name=model,
+                                temperature=temperature,
+                                top_p=top_p,
+                                max_tokens=max_tokens
+                            )
+                            parsed_json = self._parse_json_response(generated_text)
+                        else:
+                            generated_text, parsed_json = self._generate_with_vllm(
+                                model_name=model,
+                                dataset=dataset,
+                                prompt_text=prompt_text,
+                                fine_tuned=fine_tuned,
+                                temperature=temperature,
+                                top_p=top_p,
+                                max_tokens=max_tokens,
+                                max_retries=1  # Only 1 retry within _generate_with_vllm
+                            )
+                        
+                        if parsed_json:
+                            draft_result = {
+                                "text": generated_text,
+                                "parsed_json": parsed_json,
+                                "explanation": parsed_json.get("explanation", generated_text)
+                            }
+                            draft_ranking = parse_ranking_from_json(parsed_json)
+                            break
+                        
+                    except Exception as e:
+                        print(f"Draft {draft_idx} attempt {attempt + 1} failed: {e}")
+                
+                # Determine draft status
+                if draft_result:
+                    drafts.append(draft_result)
+                    rankings.append(draft_ranking)
+                    yield {
+                        "type": "draft_progress",
+                        "index": draft_idx,
+                        "status": "success",
+                        "ranking": draft_ranking
+                    }
+                else:
+                    drafts.append(None)
+                    rankings.append(None)
+                    yield {
+                        "type": "draft_progress",
+                        "index": draft_idx,
+                        "status": "failed",
+                        "ranking": None
+                    }
+            
+            # Compute NCS from rankings
+            ncs = compute_narrative_coherence_score(rankings, alpha=NCS_ALPHA)
+            
+            # For now, use the first successful draft as the final explanation
+            # In a full implementation, we would use a refiner model here
+            final_draft = next((d for d in drafts if d is not None), None)
+            
+            if final_draft is None:
+                yield {
+                    "type": "error",
+                    "message": "All draft generations failed"
+                }
+                return
+            
+            # Calculate feature changes (ground truth)
+            feature_changes = self._calculate_feature_changes(factual, counterfactual)
+            target_variable_change = self._extract_target_change(factual, counterfactual)
+            
+            # Compute metrics
+            metrics = self._compute_metrics(
+                final_draft["parsed_json"],
+                feature_changes,
+                target_variable_change,
+                factual,
+                counterfactual
+            )
+            
+            # Build final draft statuses
+            final_drafts = []
+            for i, (d, r) in enumerate(zip(drafts, rankings)):
+                final_drafts.append({
+                    "index": i,
+                    "status": "success" if d is not None else "failed",
+                    "ranking": r
+                })
+            
+            # Yield final result
+            yield {
+                "type": "complete",
+                "explanation": final_draft["explanation"],
+                "raw_output": final_draft["text"],
+                "parsed_json": final_draft["parsed_json"],
+                "feature_changes": feature_changes,
+                "target_variable_change": target_variable_change,
+                "reasoning": final_draft["parsed_json"].get("reasoning") if final_draft["parsed_json"] else None,
+                "metrics": metrics,
+                "drafts": final_drafts,
+                "ncs": ncs if not math.isnan(ncs) else None,
+                "status": "success"
+            }
+            
+        except Exception as e:
+            yield {
+                "type": "error",
+                "message": str(e)
+            }
+    
+    def _generate_self_refinement_demo(
+        self,
+        factual: Dict[str, Any],
+        counterfactual: Dict[str, Any]
+    ) -> Generator[Dict[str, Any], None, None]:
+        """
+        Generate self-refinement demo output with simulated delays.
+        """
+        # Calculate feature changes
+        feature_changes = self._calculate_feature_changes(factual, counterfactual)
+        target_variable_change = self._extract_target_change(factual, counterfactual)
+        
+        # Create feature names for rankings
+        feature_names = list(feature_changes.keys())
+        if not feature_names:
+            feature_names = ["feature_1", "feature_2", "feature_3"]
+        
+        drafts = []
+        rankings = []
+        
+        # Generate 5 draft "generations" with 1s delay each
+        for draft_idx in range(NUM_NARRATIVES):
+            # Yield loading status
+            yield {
+                "type": "draft_progress",
+                "index": draft_idx,
+                "status": "loading",
+                "ranking": None
+            }
+            
+            # Simulate generation time
+            time.sleep(1)
+            
+            # Create a slightly varied ranking for each draft
+            ranking = {}
+            for i, feature in enumerate(feature_names[:5]):
+                # Add some variation in rankings across drafts
+                base_rank = (i % 3) + 1
+                variation = (draft_idx + i) % 2
+                ranking[feature.lower()] = base_rank + variation
+            
+            rankings.append(ranking)
+            drafts.append({
+                "index": draft_idx,
+                "status": "success",
+                "ranking": ranking
+            })
+            
+            # Yield success status
+            yield {
+                "type": "draft_progress",
+                "index": draft_idx,
+                "status": "success",
+                "ranking": ranking
+            }
+        
+        # Compute NCS
+        ncs = compute_narrative_coherence_score(rankings, alpha=NCS_ALPHA)
+        
+        # Generate the demo explanation
+        demo_result = self._generate_dummy_explanation(factual, counterfactual)
+        
+        # Yield final result
+        yield {
+            "type": "complete",
+            "explanation": demo_result["explanation"],
+            "raw_output": demo_result["raw_output"],
+            "parsed_json": demo_result["parsed_json"],
+            "feature_changes": demo_result["feature_changes"],
+            "target_variable_change": demo_result["target_variable_change"],
+            "reasoning": demo_result["reasoning"],
+            "metrics": {
+                "json_parsing_success": True,
+                "pff": True,
+                "tf": True,
+                "avg_ff": 1.0
+            },
+            "drafts": drafts,
+            "ncs": ncs if not math.isnan(ncs) else None,
+            "status": "demo",
+            "warning": "CUDA is not available. The generated explanation is just a template."
+        }
 
 
 # Global service instance

@@ -44,7 +44,7 @@ const ModelSelector = ({ models, selectedModel, onModelChange, loading }) => {
       </div>
       {selectedModel && (
         <p className="mt-2 text-xs text-neutral-500 flex items-center gap-1">
-          <span className="w-1.5 h-1.5 rounded-full bg-accent-500"></span>
+          <span className="w-1.5 h-1.5 rounded-full theme-accent-dot"></span>
           Ready to generate with {selectedModel}
         </p>
       )}

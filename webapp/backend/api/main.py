@@ -1,8 +1,10 @@
 """FastAPI application for counterfactual narrative explanations."""
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from typing import Dict, Any
 import sys
+import json
 from pathlib import Path
 
 # Add backend to path
@@ -163,6 +165,61 @@ async def explain(request: ExplainRequest):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/explain/stream")
+async def explain_stream(request: ExplainRequest):
+    """
+    Generate a narrative explanation with streaming updates (Server-Sent Events).
+    
+    For self-refinement mode, streams progress updates as each draft completes.
+    """
+    def generate_sse():
+        """Generator for Server-Sent Events."""
+        try:
+            if request.generation_type == "self-refinement":
+                # Use the streaming generator
+                for event in pipeline_service.generate_self_refinement(
+                    dataset=request.dataset,
+                    model=request.model,
+                    factual=request.factual,
+                    counterfactual=request.counterfactual,
+                    fine_tuned=request.fine_tuned,
+                    temperature=request.temperature,
+                    top_p=request.top_p,
+                    max_tokens=request.max_tokens
+                ):
+                    yield f"data: {json.dumps(event)}\n\n"
+            else:
+                # One-shot mode - just generate normally and return as complete event
+                result = pipeline_service.generate_explanation(
+                    dataset=request.dataset,
+                    model=request.model,
+                    factual=request.factual,
+                    counterfactual=request.counterfactual,
+                    use_refiner=request.use_refiner,
+                    fine_tuned=request.fine_tuned,
+                    temperature=request.temperature,
+                    top_p=request.top_p,
+                    max_tokens=request.max_tokens
+                )
+                # Convert metrics object to dict if needed
+                if result.get("metrics") and hasattr(result["metrics"], "model_dump"):
+                    result["metrics"] = result["metrics"].model_dump()
+                
+                yield f"data: {json.dumps({'type': 'complete', **result})}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        generate_sse(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 
 if __name__ == "__main__":

@@ -1,9 +1,76 @@
 import React, { useState } from 'react';
 
-const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loading, error }) => {
+const NUM_NARRATIVES = 5;
+
+const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loading, error, drafts = [], ncs = null, generationType = 'one-shot' }) => {
   const [copied, setCopied] = useState(false);
   const [showJsonModal, setShowJsonModal] = useState(false);
   const [showRawOutputModal, setShowRawOutputModal] = useState(false);
+
+  // Draft status indicator component
+  const DraftIndicator = ({ status, index }) => {
+    const getStatusIcon = () => {
+      switch (status) {
+        case 'loading':
+          return (
+            <svg className="w-4 h-4 animate-spin text-neutral-400" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          );
+        case 'success':
+          return (
+            <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          );
+        case 'failed':
+          return (
+            <svg className="w-4 h-4 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          );
+        default: // pending
+          return (
+            <div className="w-3 h-3 rounded-full bg-neutral-600"></div>
+          );
+      }
+    };
+
+    return (
+      <div 
+        className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all ${
+          status === 'loading' ? 'theme-status-badge animate-pulse' :
+          status === 'success' ? 'bg-green-500/10 border border-green-500/30' :
+          status === 'failed' ? 'bg-amber-500/10 border border-amber-500/30' :
+          'theme-status-badge'
+        }`}
+        title={`Draft ${index + 1}: ${status}`}
+      >
+        {getStatusIcon()}
+      </div>
+    );
+  };
+
+  // Draft progress section for self-refinement mode
+  const DraftProgressSection = () => {
+    if (generationType !== 'self-refinement') return null;
+    
+    // Create array of 5 draft statuses
+    const draftStatuses = Array(NUM_NARRATIVES).fill(null).map((_, i) => {
+      if (drafts[i]) return drafts[i].status;
+      return 'pending';
+    });
+
+    return (
+      <div className="flex items-center gap-2 ml-4">
+        <span className="text-xs text-neutral-500 mr-1">Drafts:</span>
+        {draftStatuses.map((status, idx) => (
+          <DraftIndicator key={idx} status={status} index={idx} />
+        ))}
+      </div>
+    );
+  };
 
   const handleCopy = async () => {
     if (explanation) {
@@ -22,22 +89,45 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
       <div className="glass-card rounded-2xl p-8 animate-fade-in">
         <div className="flex flex-col items-center justify-center py-12">
           <div className="relative">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-accent-500/20 to-accent-600/20 flex items-center justify-center mb-6">
-              <svg className="w-8 h-8 text-accent-400 animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="w-16 h-16 rounded-2xl theme-accent-icon-bg opacity-20 flex items-center justify-center mb-6">
+              <svg className="w-8 h-8 theme-accent-text animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
               </svg>
             </div>
-            <div className="absolute inset-0 rounded-2xl bg-accent-500/10 animate-ping"></div>
+            <div className="absolute inset-0 rounded-2xl theme-accent-icon-bg opacity-10 animate-ping"></div>
           </div>
-          <h3 className="text-lg font-medium text-white mb-2">Generating Explanation</h3>
+          <h3 className="text-lg font-medium text-white mb-2">
+            {generationType === 'self-refinement' ? 'Generating Draft Narratives' : 'Generating Explanation'}
+          </h3>
           <p className="text-sm text-neutral-500 text-center max-w-md">
-            The SLM is analyzing the differences and crafting a natural language explanation...
+            {generationType === 'self-refinement' 
+              ? 'The SLM is generating multiple draft explanations for refinement...'
+              : 'The SLM is analyzing the differences and crafting a natural language explanation...'}
           </p>
-          <div className="mt-6 flex items-center gap-2">
-            <div className="w-2 h-2 rounded-full bg-accent-500 animate-bounce" style={{ animationDelay: '0ms' }}></div>
-            <div className="w-2 h-2 rounded-full bg-accent-500 animate-bounce" style={{ animationDelay: '150ms' }}></div>
-            <div className="w-2 h-2 rounded-full bg-accent-500 animate-bounce" style={{ animationDelay: '300ms' }}></div>
-          </div>
+          
+          {/* Draft Progress for self-refinement mode */}
+          {generationType === 'self-refinement' && (
+            <div className="mt-6 flex flex-col items-center gap-3">
+              <div className="flex items-center gap-2">
+                {Array(NUM_NARRATIVES).fill(null).map((_, idx) => {
+                  const draftStatus = drafts[idx]?.status || 'pending';
+                  return <DraftIndicator key={idx} status={draftStatus} index={idx} />;
+                })}
+              </div>
+              <span className="text-xs text-neutral-500">
+                {drafts.filter(d => d?.status === 'success').length} / {NUM_NARRATIVES} drafts completed
+              </span>
+            </div>
+          )}
+          
+          {/* Simple loading animation for one-shot mode */}
+          {generationType !== 'self-refinement' && (
+            <div className="mt-6 flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full theme-accent-dot animate-bounce" style={{ animationDelay: '0ms' }}></div>
+              <div className="w-2 h-2 rounded-full theme-accent-dot animate-bounce" style={{ animationDelay: '150ms' }}></div>
+              <div className="w-2 h-2 rounded-full theme-accent-dot animate-bounce" style={{ animationDelay: '300ms' }}></div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -77,33 +167,80 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
     );
   }
 
-  // Status indicator component
-  const StatusBadge = ({ label, isSuccess, value }) => (
-    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-dark-800/60 border border-dark-700/50">
-      <span className="text-xs font-semibold text-neutral-400 uppercase tracking-wider">{label}</span>
-      {value !== undefined && value !== null ? (
-        <span className="text-sm font-mono text-accent-300">{value}</span>
-      ) : (
-        <div className={`w-3 h-3 rounded-full ${isSuccess ? 'bg-green-500' : 'bg-red-500'}`} title={isSuccess ? 'Success' : 'Failed'}></div>
-      )}
-    </div>
-  );
+  // Status indicator component with tooltip
+  const StatusBadge = ({ label, isSuccess, value, description }) => {
+    const [showTooltip, setShowTooltip] = useState(false);
+    
+    return (
+      <div 
+        className="relative flex items-center gap-3 px-4 py-3 rounded-lg theme-status-badge group"
+        onMouseEnter={() => setShowTooltip(true)}
+        onMouseLeave={() => setShowTooltip(false)}
+      >
+        <span className="text-sm font-semibold theme-status-label uppercase tracking-wider">{label}</span>
+        {value !== undefined && value !== null ? (
+          <span className="text-sm font-mono theme-accent-text font-medium">{value}</span>
+        ) : (
+          <div className={`w-4 h-4 rounded-full ${isSuccess ? 'bg-green-500' : 'bg-red-500'}`} title={isSuccess ? 'Success' : 'Failed'}></div>
+        )}
+        
+        {/* Tooltip */}
+        {description && showTooltip && (
+          <div className="absolute bottom-full left-0 mb-2 px-3 py-2 theme-tooltip rounded-lg shadow-lg z-50 min-w-[200px] max-w-[300px]">
+            <p className="text-xs theme-tooltip-text leading-relaxed">
+              {description.includes(':') ? (
+                <>
+                  <span className="font-bold">{description.split(':')[0]}:</span>
+                  {description.split(':').slice(1).join(':')}
+                </>
+              ) : (
+                description
+              )}
+            </p>
+            <div className="absolute top-full left-4 -mt-1">
+              <div className="w-2 h-2 theme-tooltip-arrow transform rotate-45"></div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <>
       <div className="glass-card-elevated rounded-2xl overflow-hidden animate-fade-in-up">
         {/* Header */}
-        <div className="px-6 py-4 bg-gradient-to-r from-accent-500/10 to-transparent border-b border-dark-700/50">
+        <div className="px-6 py-4 theme-accent-header-gradient border-b border-dark-700/50">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-accent-500 to-accent-600 flex items-center justify-center shadow-lg shadow-accent-500/20">
-                <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-xl theme-accent-icon-bg flex items-center justify-center">
+                <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
                 </svg>
               </div>
-              <div>
-                <h3 className="text-lg font-semibold text-white">Counterfactual Narrative</h3>
-                <p className="text-xs text-neutral-500">LLM-generated translation of the selected counterfactual explanation into natural language</p>
+              <div className="flex items-center gap-4">
+                <h3 className="text-2xl font-semibold text-white">Counterfactual Narrative</h3>
+                {/* Draft progress indicators for self-refinement mode */}
+                {generationType === 'self-refinement' && drafts.length > 0 && (
+                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg theme-status-badge">
+                    <span className="text-xs text-neutral-500 mr-1">Drafts:</span>
+                    {Array(NUM_NARRATIVES).fill(null).map((_, idx) => {
+                      const status = drafts[idx]?.status || 'pending';
+                      return (
+                        <div 
+                          key={idx}
+                          className={`w-2 h-2 rounded-full ${
+                            status === 'success' ? 'bg-green-500' :
+                            status === 'failed' ? 'bg-amber-500' :
+                            status === 'loading' ? 'bg-neutral-400 animate-pulse' :
+                            'bg-neutral-600'
+                          }`}
+                          title={`Draft ${idx + 1}: ${status}`}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             </div>
             <button
@@ -150,21 +287,22 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
             {/* Status Indicators */}
             <div className="flex flex-wrap items-center gap-3 mb-4">
               <StatusBadge 
-                label="JP" 
-                isSuccess={metrics.json_parsing_success} 
-              />
-              <StatusBadge 
                 label="PFF" 
-                isSuccess={metrics.pff} 
+                isSuccess={metrics.pff}
+                description="Perfect Feature Faithfulness: All the features changes are correctly identified"
               />
               <StatusBadge 
                 label="TF" 
-                isSuccess={metrics.tf} 
+                isSuccess={metrics.tf}
+                description="Target Faithfulness: Whether the target variable change is correctly identified"
               />
-              <StatusBadge 
-                label="AvgFF" 
-                value={metrics.avg_ff !== null && metrics.avg_ff !== undefined ? metrics.avg_ff.toFixed(3) : 'N/A'} 
-              />
+              {generationType === 'self-refinement' && ncs !== null && (
+                <StatusBadge 
+                  label="NCS" 
+                  value={typeof ncs === 'number' ? ncs.toFixed(3) : 'N/A'}
+                  description="Narrative Consensus Score: Measures agreement between draft narratives (0-1 range)"
+                />
+              )}
             </div>
 
             {/* Action Buttons */}
@@ -212,7 +350,7 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
             <div className="sticky top-0 z-10 px-6 py-4 bg-dark-850 border-b border-dark-700">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-green-500 to-green-600 flex items-center justify-center shadow-lg shadow-green-500/20">
+                  <div className="w-10 h-10 rounded-xl theme-accent-icon-bg flex items-center justify-center">
                     <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
                     </svg>
@@ -261,7 +399,7 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
             <div className="sticky top-0 z-10 px-6 py-4 bg-dark-850 border-b border-dark-700">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-accent-500 to-accent-600 flex items-center justify-center shadow-lg shadow-accent-500/20">
+                  <div className="w-10 h-10 rounded-xl theme-accent-icon-bg flex items-center justify-center">
                     <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
