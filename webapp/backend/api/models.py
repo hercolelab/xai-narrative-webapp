@@ -22,6 +22,7 @@ class DraftStatus(BaseModel):
     index: int = Field(..., description="Draft index (0-4)")
     status: Literal["pending", "loading", "success", "failed"] = Field(..., description="Draft status")
     ranking: Optional[Dict[str, int]] = Field(default=None, description="Feature importance ranking from this draft")
+    explanation: Optional[str] = Field(default=None, description="Draft narrative explanation text")
 
 
 class MetricsResponse(BaseModel):
@@ -42,7 +43,7 @@ class ExplainResponse(BaseModel):
     reasoning: Optional[str] = Field(default=None, description="Reasoning if available")
     metrics: Optional[MetricsResponse] = Field(default=None, description="Inference metrics")
     drafts: Optional[List[DraftStatus]] = Field(default=None, description="Draft statuses for self-refinement mode")
-    ncs: Optional[float] = Field(default=None, description="Narrative Consensus Score for self-refinement mode")
+    nss: Optional[float] = Field(default=None, description="Narrative Stability Score for self-refinement mode")
     status: str = Field(default="success", description="Status of the request")
     warning: Optional[str] = Field(default=None, description="Warning message if this is a demo/example")
 

@@ -6,9 +6,89 @@ import TypeSelector from './components/TypeSelector';
 import DataDisplay from './components/DataDisplay';
 import ExplanationDisplay from './components/ExplanationDisplay';
 import DatasetDescriptionModal from './components/DatasetDescriptionModal';
+import demoNarratives from './demoNarratives';
 import './App.css';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+
+// Utility function to parse JSON from raw output (matches backend logic)
+const parseJsonFromRawOutput = (text) => {
+  if (!text) return null;
+  
+  const candidates = [];
+  
+  // 1) Look for fenced json blocks
+  const fencedMatches = text.matchAll(/```json\s*(\{[\s\S]*?\})\s*```/g);
+  for (const match of fencedMatches) {
+    if (match[1]) candidates.push(match[1].trim());
+  }
+  
+  // 2) Look for balanced braces
+  const stack = [];
+  let startIdx = null;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '{') {
+      if (stack.length === 0) startIdx = i;
+      stack.push(ch);
+    } else if (ch === '}' && stack.length > 0) {
+      stack.pop();
+      if (stack.length === 0 && startIdx !== null) {
+        const snippet = text.substring(startIdx, i + 1);
+        candidates.push(snippet.trim());
+      }
+    }
+  }
+  
+  // Try to parse candidates (reverse order - last first)
+  const requiredKeys = new Set(['feature_changes', 'reasoning', 'features_importance_ranking', 'explanation']);
+  
+  // Priority 1: Objects with all required keys
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    try {
+      const parsed = JSON.parse(candidates[i]);
+      if (typeof parsed === 'object' && requiredKeys.isSubsetOf(new Set(Object.keys(parsed)))) {
+        return parsed;
+      }
+    } catch (e) {
+      // Continue to next candidate
+    }
+  }
+  
+  // Priority 2: Objects with at least feature_changes
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    try {
+      const parsed = JSON.parse(candidates[i]);
+      if (typeof parsed === 'object' && parsed.feature_changes) {
+        return parsed;
+      }
+    } catch (e) {
+      // Continue to next candidate
+    }
+  }
+  
+  // Priority 3: Any valid dict object
+  for (let i = candidates.length - 1; i >= 0; i--) {
+    try {
+      const parsed = JSON.parse(candidates[i]);
+      if (typeof parsed === 'object' && parsed !== null) {
+        return parsed;
+      }
+    } catch (e) {
+      // Continue to next candidate
+    }
+  }
+  
+  return null;
+};
+
+// Helper for Set.isSubsetOf (not available in all browsers)
+Set.prototype.isSubsetOf = Set.prototype.isSubsetOf || function(other) {
+  for (const elem of this) {
+    if (!other.has(elem)) return false;
+  }
+  return true;
+};
 
 function App() {
   // Theme state - default to dark mode
@@ -33,7 +113,7 @@ function App() {
   const [targetVariableChange, setTargetVariableChange] = useState({});
   const [metrics, setMetrics] = useState(null);
   const [drafts, setDrafts] = useState([]); // Draft statuses for self-refinement mode
-  const [ncs, setNcs] = useState(null); // Narrative Consensus Score
+  const [nss, setNss] = useState(null); // Narrative Stability Score
   const [warning, setWarning] = useState(null); // Model warning (CUDA, no models found, etc.)
   const [loading, setLoading] = useState(false);
   const [loadingExample, setLoadingExample] = useState(false);
@@ -139,7 +219,7 @@ function App() {
     setTargetVariableChange({});
     setMetrics(null);
     setDrafts([]);
-    setNcs(null);
+    setNss(null);
     setGenerationType('');
     // Don't clear model warning here - it will be updated when models are loaded
     setFineTuned(true); // Reset fine-tuned checkbox to default
@@ -163,6 +243,7 @@ function App() {
     // Don't clear warning - it should persist throughout the process
 
     try {
+      // Always load from API (even in demo mode)
       const response = await axios.get(`${API_BASE_URL}/api/examples/${selectedDataset}`);
       setFactual(response.data.factual);
       setCounterfactual(response.data.counterfactual);
@@ -205,8 +286,8 @@ function App() {
   };
 
   const handleGenerateExplanation = async () => {
-    if (!selectedDataset || !selectedModel || !factual || !counterfactual) {
-      setError('Please select dataset, model, and load an example first');
+    if (!selectedDataset || !selectedModel) {
+      setError('Please select dataset and model first');
       return;
     }
 
@@ -215,11 +296,128 @@ function App() {
       return;
     }
 
+    // Standard mode - require factual/counterfactual to be loaded
+    if (selectedModel !== 'demo' && (!factual || !counterfactual)) {
+      setError('Please load an example first');
+      return;
+    }
+
     setLoading(true);
     setError(null);
     setDrafts([]);
-    setNcs(null);
+    setNss(null);
     // Don't clear warning - it should persist throughout the process
+
+    // Demo mode handling
+    if (selectedModel === 'demo') {
+      try {
+        const demoData = demoNarratives[selectedDataset];
+        if (!demoData) {
+          throw new Error(`No demo data available for dataset: ${selectedDataset}`);
+        }
+
+        // Load the factual/counterfactual pair that matches the narrative
+        setFactual(demoData.factual);
+        setCounterfactual(demoData.counterfactual);
+        
+        // Small delay to show the data before generating
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        // Parse JSON from raw output
+        const parsedJson = parseJsonFromRawOutput(demoData.raw_output);
+        
+        // Calculate feature changes from factual/counterfactual
+        const calculateFeatureChanges = (factual, counterfactual) => {
+          const changes = {};
+          const allKeys = new Set([...Object.keys(factual), ...Object.keys(counterfactual)]);
+          for (const key of allKeys) {
+            if (factual[key] !== counterfactual[key]) {
+              changes[key] = {
+                factual: factual[key],
+                counterfactual: counterfactual[key]
+              };
+            }
+          }
+          return changes;
+        };
+
+        const featureChanges = calculateFeatureChanges(factual, counterfactual);
+        
+        // Extract target variable change
+        const targetNames = ['target', 'label', 'prediction', 'y', 'Survived', 'Income', 'MedHouseVal', 'income', 'survived', 'medhouseval'];
+        let targetVariableChange = {};
+        for (const name of targetNames) {
+          if (factual[name] !== undefined && counterfactual[name] !== undefined && factual[name] !== counterfactual[name]) {
+            targetVariableChange = {
+              variable: name,
+              factual: factual[name],
+              counterfactual: counterfactual[name]
+            };
+            break;
+          }
+        }
+
+        // Calculate metrics (demo mode: assume perfect)
+        const metrics = {
+          json_parsing_success: parsedJson !== null,
+          pff: true,
+          tf: true,
+          avg_ff: 1.0
+        };
+
+        // Self-refinement mode: simulate draft generation
+        if (generationType === 'self-refinement' && demoData.drafts) {
+          // Simulate draft generation with delays
+          for (let i = 0; i < demoData.drafts.length; i++) {
+            setDrafts(prev => {
+              const newDrafts = [...prev];
+              newDrafts[i] = {
+                status: 'loading',
+                ranking: null,
+                explanation: null
+              };
+              return newDrafts;
+            });
+
+            // Wait 1 second
+            await new Promise(resolve => setTimeout(resolve, 1000));
+
+            setDrafts(prev => {
+              const newDrafts = [...prev];
+              newDrafts[i] = {
+                status: demoData.drafts[i].status,
+                ranking: null,
+                explanation: demoData.drafts[i].text
+              };
+              return newDrafts;
+            });
+          }
+
+          // Set final results with NSS
+          setExplanation(demoData.narrative);
+          setRawOutput(demoData.raw_output);
+          setParsedJson(parsedJson);
+          setFeatureChanges(featureChanges);
+          setTargetVariableChange(targetVariableChange);
+          setMetrics(metrics);
+          setNss(demoData.nss);
+        } else {
+          // One-shot mode
+          setExplanation(demoData.narrative);
+          setRawOutput(demoData.raw_output);
+          setParsedJson(parsedJson);
+          setFeatureChanges(featureChanges);
+          setTargetVariableChange(targetVariableChange);
+          setMetrics(metrics);
+        }
+      } catch (err) {
+        setError(`Demo mode error: ${err.message}`);
+        console.error('Demo mode error:', err);
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
 
     // Use streaming endpoint for self-refinement mode
     if (generationType === 'self-refinement') {
@@ -282,7 +480,7 @@ function App() {
                   setFeatureChanges(data.feature_changes || {});
                   setTargetVariableChange(data.target_variable_change || {});
                   setMetrics(data.metrics || null);
-                  setNcs(data.ncs);
+                  setNss(data.nss);
                   setDrafts(data.drafts || []);
                 } else if (data.type === 'error') {
                   throw new Error(data.message);
@@ -586,8 +784,10 @@ function App() {
             loading={loading}
             error={error && !factual ? error : null}
             drafts={drafts}
-            ncs={ncs}
+            nss={nss}
             generationType={generationType}
+            selectedModel={selectedModel}
+            selectedDataset={selectedDataset}
           />
         </section>
       </main>

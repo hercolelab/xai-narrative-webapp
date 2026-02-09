@@ -1,11 +1,16 @@
 import React, { useState } from 'react';
+import demoNarratives from '../demoNarratives';
 
 const NUM_NARRATIVES = 5;
 
-const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loading, error, drafts = [], ncs = null, generationType = 'one-shot' }) => {
+const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loading, error, drafts = [], nss = null, generationType = 'one-shot', selectedModel = '', selectedDataset = '' }) => {
   const [copied, setCopied] = useState(false);
   const [showJsonModal, setShowJsonModal] = useState(false);
   const [showRawOutputModal, setShowRawOutputModal] = useState(false);
+  const [selectedDraft, setSelectedDraft] = useState(null);
+  const [showDraftModal, setShowDraftModal] = useState(false);
+  
+  const isDemo = selectedModel === 'demo';
 
   // Draft status indicator component
   const DraftIndicator = ({ status, index }) => {
@@ -167,9 +172,23 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
     );
   }
 
+  // Helper function to categorize NSS
+  const categorizeNSS = (nssValue) => {
+    if (nssValue < 0.7) {
+      return { label: 'Low', color: 'text-red-400', bgColor: 'bg-red-500/10', borderColor: 'border-red-500/30' };
+    } else if (nssValue >= 0.7 && nssValue <= 0.8) {
+      return { label: 'Medium', color: 'text-orange-400', bgColor: 'bg-orange-500/10', borderColor: 'border-orange-500/30' };
+    } else {
+      return { label: 'High', color: 'text-green-600', bgColor: 'bg-green-500/10', borderColor: 'border-green-500/30' };
+    }
+  };
+
   // Status indicator component with tooltip
-  const StatusBadge = ({ label, isSuccess, value, description }) => {
+  const StatusBadge = ({ label, isSuccess, value, description, nssValue = null }) => {
     const [showTooltip, setShowTooltip] = useState(false);
+    
+    // If this is NSS, use categorization
+    const nssCategory = nssValue !== null ? categorizeNSS(nssValue) : null;
     
     return (
       <div 
@@ -178,7 +197,9 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
         onMouseLeave={() => setShowTooltip(false)}
       >
         <span className="text-sm font-semibold theme-status-label uppercase tracking-wider">{label}</span>
-        {value !== undefined && value !== null ? (
+        {nssCategory ? (
+          <span className={`text-sm font-semibold ${nssCategory.color}`}>{nssCategory.label}</span>
+        ) : value !== undefined && value !== null ? (
           <span className="text-sm font-mono theme-accent-text font-medium">{value}</span>
         ) : (
           <div className={`w-4 h-4 rounded-full ${isSuccess ? 'bg-green-500' : 'bg-red-500'}`} title={isSuccess ? 'Success' : 'Failed'}></div>
@@ -208,9 +229,9 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
 
   return (
     <>
-      <div className="glass-card-elevated rounded-2xl overflow-hidden animate-fade-in-up">
+      <div className="glass-card-elevated rounded-2xl overflow-hidden animate-fade-in-up relative">
         {/* Header */}
-        <div className="px-6 py-4 theme-accent-header-gradient border-b border-dark-700/50">
+        <div className="px-6 py-4 theme-narrative-header">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <div className="w-12 h-12 rounded-xl theme-accent-icon-bg flex items-center justify-center">
@@ -218,56 +239,80 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
                 </svg>
               </div>
-              <div className="flex items-center gap-4">
-                <h3 className="text-2xl font-semibold text-white">Counterfactual Narrative</h3>
-                {/* Draft progress indicators for self-refinement mode */}
-                {generationType === 'self-refinement' && drafts.length > 0 && (
-                  <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg theme-status-badge">
-                    <span className="text-xs text-neutral-500 mr-1">Drafts:</span>
-                    {Array(NUM_NARRATIVES).fill(null).map((_, idx) => {
-                      const status = drafts[idx]?.status || 'pending';
-                      return (
-                        <div 
-                          key={idx}
-                          className={`w-2 h-2 rounded-full ${
-                            status === 'success' ? 'bg-green-500' :
-                            status === 'failed' ? 'bg-amber-500' :
-                            status === 'loading' ? 'bg-neutral-400 animate-pulse' :
-                            'bg-neutral-600'
-                          }`}
-                          title={`Draft ${idx + 1}: ${status}`}
-                        />
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
+              <h3 className="text-2xl font-semibold text-white">Counterfactual Narrative</h3>
             </div>
-            <button
-              onClick={handleCopy}
-              className="btn btn-ghost text-sm"
-            >
-              {copied ? (
-                <>
-                  <svg className="h-4 w-4 mr-1.5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+            <div className="flex items-center gap-4">
+              {/* Draft Narratives Card */}
+              {generationType === 'self-refinement' && drafts.length > 0 && (
+                <div className="px-4 py-2 rounded-lg theme-draft-narratives-container border">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs font-semibold theme-draft-narratives-label uppercase tracking-wider">Draft Narratives</span>
+                    <div className="flex items-center gap-2">
+                      {drafts.map((draft, idx) => {
+                        const draftText = isDemo && demoNarratives[selectedDataset]?.drafts[idx]?.text 
+                          ? demoNarratives[selectedDataset].drafts[idx].text 
+                          : draft.explanation || '';
+                        const draftStatus = draft?.status || 'pending';
+                        
+                        return (
+                          <button
+                            key={idx}
+                            onClick={() => {
+                              if (draftStatus === 'success' && draftText) {
+                                setSelectedDraft({ number: idx + 1, text: draftText });
+                                setShowDraftModal(true);
+                              }
+                            }}
+                            disabled={draftStatus !== 'success' || !draftText}
+                            className={`p-2 rounded-lg transition-all border ${
+                              draftStatus === 'success' 
+                                ? 'theme-draft-button cursor-pointer' 
+                                : draftStatus === 'failed'
+                                ? 'bg-amber-500/20 dark:bg-amber-500/20 border-amber-500/30 dark:border-amber-500/30 cursor-not-allowed'
+                                : 'theme-draft-button cursor-not-allowed opacity-50'
+                            }`}
+                            title={draftStatus === 'success' ? `Draft ${idx + 1}: Click to view` : `Draft ${idx + 1}: ${draftStatus}`}
+                          >
+                            <div className="flex flex-col items-center gap-1">
+                              <span className="text-xs font-semibold theme-draft-button-text">Draft {idx + 1}</span>
+                              {draftStatus === 'success' ? (
+                                <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                              ) : draftStatus === 'failed' ? (
+                                <svg className="w-3 h-3 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                </svg>
+                              ) : (
+                                <div className="w-2 h-2 rounded-full bg-neutral-400 dark:bg-white/40"></div>
+                              )}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+              )}
+              <button
+                onClick={handleCopy}
+                className="btn btn-ghost text-sm"
+                title={copied ? "Copied!" : "Copy to clipboard"}
+              >
+                {copied ? (
+                  <svg className="h-4 w-4 text-green-400" fill="currentColor" viewBox="0 0 20 20">
                     <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
                   </svg>
-                  <span className="text-green-400">Copied!</span>
-                </>
-              ) : (
-                <>
-                  <svg className="h-4 w-4 mr-1.5 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                ) : (
+                  <svg className="h-4 w-4 opacity-70" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
                   </svg>
-                  Copy
-                </>
-              )}
-            </button>
+                )}
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Explanation Content */}
-        <div className="p-6">
+        <div className="p-6 pt-4 theme-narrative-content">
           <div className="prose prose-invert max-w-none">
             <div className="text-neutral-200 leading-relaxed text-base">
               {explanation.split('\n\n').map((paragraph, idx) => (
@@ -281,53 +326,58 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
 
         {/* Metrics Section */}
         {metrics && (
-          <div className="px-6 pb-6">
+          <div className="px-6 pb-6 theme-narrative-content">
             <div className="divider mb-4"></div>
             
-            {/* Status Indicators */}
-            <div className="flex flex-wrap items-center gap-3 mb-4">
-              <StatusBadge 
-                label="PFF" 
-                isSuccess={metrics.pff}
-                description="Perfect Feature Faithfulness: All the features changes are correctly identified"
-              />
-              <StatusBadge 
-                label="TF" 
-                isSuccess={metrics.tf}
-                description="Target Faithfulness: Whether the target variable change is correctly identified"
-              />
-              {generationType === 'self-refinement' && ncs !== null && (
+            {/* Validation Metrics Card */}
+            <div className="inline-flex items-center gap-4 px-4 py-3 rounded-lg theme-status-badge border border-dark-700/30">
+              <span className="text-xs font-semibold text-neutral-400 uppercase tracking-wider whitespace-nowrap">Validation Metrics</span>
+              <div className="flex items-center gap-3">
                 <StatusBadge 
-                  label="NCS" 
-                  value={typeof ncs === 'number' ? ncs.toFixed(3) : 'N/A'}
-                  description="Narrative Consensus Score: Measures agreement between draft narratives (0-1 range)"
+                  label="PFF" 
+                  isSuccess={metrics.pff}
+                  description="Perfect Feature Faithfulness: All the features changes are correctly identified"
                 />
-              )}
+                <StatusBadge 
+                  label="TF" 
+                  isSuccess={metrics.tf}
+                  description="Target Faithfulness: Whether the target variable change is correctly identified"
+                />
+                {generationType === 'self-refinement' && nss !== null && (
+                  <StatusBadge 
+                    label="NSS" 
+                    nssValue={typeof nss === 'number' ? nss : null}
+                    description="Narrative Stability Score: Measures stability and agreement between draft narratives. Low (<0.7): High variation, Medium (0.7-0.8): Moderate agreement, High (>0.8): Strong consensus"
+                  />
+                )}
+              </div>
             </div>
+          </div>
+        )}
 
-            {/* Action Buttons */}
-            <div className="flex flex-wrap gap-3">
-              <button
-                onClick={() => setShowJsonModal(true)}
-                disabled={!metrics.json_parsing_success}
-                className={`btn ${metrics.json_parsing_success ? 'btn-secondary' : 'btn-secondary opacity-50 cursor-not-allowed'}`}
-              >
-                <svg className="w-4 h-4 mr-2 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-                </svg>
-                See JSON Object
-              </button>
-              
-              <button
-                onClick={() => setShowRawOutputModal(true)}
-                className="btn btn-secondary"
-              >
-                <svg className="w-4 h-4 mr-2 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Full SLM Output
-              </button>
-            </div>
+        {/* Action Buttons - Bottom Right */}
+        {metrics && (
+          <div className="absolute bottom-4 right-4 flex gap-2">
+            <button
+              onClick={() => setShowJsonModal(true)}
+              disabled={!metrics.json_parsing_success}
+              className={`btn btn-secondary text-sm ${metrics.json_parsing_success ? '' : 'opacity-50 cursor-not-allowed'}`}
+              title="See JSON Object"
+            >
+              <svg className="w-4 h-4 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+              </svg>
+            </button>
+            
+            <button
+              onClick={() => setShowRawOutputModal(true)}
+              className="btn btn-secondary text-sm"
+              title="Full SLM Output"
+            >
+              <svg className="w-4 h-4 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </button>
           </div>
         )}
       </div>
@@ -426,6 +476,61 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
                 <pre className="whitespace-pre-wrap text-sm text-neutral-300 font-mono leading-relaxed">
                   {rawOutput}
                 </pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Draft Modal */}
+      {showDraftModal && selectedDraft && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-dark-950/80 backdrop-blur-md animate-fade-in"
+            onClick={() => setShowDraftModal(false)}
+          ></div>
+          
+          {/* Modal */}
+          <div 
+            className="relative w-full max-w-3xl max-h-[85vh] bg-dark-850 border border-dark-700 rounded-2xl overflow-hidden shadow-elevated animate-fade-in-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="sticky top-0 z-10 px-6 py-4 bg-dark-850 border-b border-dark-700">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-green-500/20 flex items-center justify-center">
+                    <svg className="w-5 h-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">Draft {selectedDraft.number}</h3>
+                    <p className="text-xs text-neutral-500">Draft narrative explanation</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowDraftModal(false)}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:text-white hover:bg-dark-700 transition-colors"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 overflow-y-auto max-h-[calc(85vh-80px)]">
+              <div className="prose prose-invert max-w-none">
+                <div className="text-neutral-200 leading-relaxed text-base">
+                  {selectedDraft.text.split('\n\n').map((paragraph, idx) => (
+                    <p key={idx} className="mb-4 last:mb-0">
+                      {paragraph}
+                    </p>
+                  ))}
+                </div>
               </div>
             </div>
           </div>

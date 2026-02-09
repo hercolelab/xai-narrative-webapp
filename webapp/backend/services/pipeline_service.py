@@ -89,11 +89,11 @@ except ImportError:
 # Constants for self-refinement mode
 NUM_NARRATIVES = 5
 MAX_ATTEMPTS = 2
-NCS_ALPHA = 0.6
+NSS_ALPHA = 0.6
 
 
 # ============================================================================
-# NCS (Narrative Consensus Score) Computation Functions
+# NSS (Narrative Stability Score) Computation Functions
 # ============================================================================
 
 def compute_jaccard_similarity(dict1: Dict[str, int], dict2: Dict[str, int]) -> float:
@@ -213,21 +213,21 @@ def compute_pairwise_coherence_score(
     return score
 
 
-def compute_narrative_coherence_score(
+def compute_narrative_semantic_similarity(
     rankings: List[Dict[str, int]],
     alpha: float = 0.6
 ) -> float:
     """
-    Compute Narrative Coherence Score (NCS) for a set of feature importance rankings.
+    Compute Narrative Stability Score (NSS) for a set of feature importance rankings.
     
-    NCS = (2 / N(N-1)) * sum_{i<j} S(e_i, e_j)
+    NSS = (2 / N(N-1)) * sum_{i<j} S(e_i, e_j)
     
     Args:
         rankings: List of ranking dictionaries {feature_name: rank}
         alpha: Weight for Jaccard similarity in pairwise score (default 0.6)
     
     Returns:
-        float: NCS in [0, 1], or NaN if not enough rankings
+        float: NSS in [0, 1], or NaN if not enough rankings
     """
     # Filter out None rankings
     valid_rankings = [r for r in rankings if r is not None and len(r) > 0]
@@ -246,12 +246,12 @@ def compute_narrative_coherence_score(
             total_score += score
             num_pairs += 1
     
-    # NCS = (2 / N(N-1)) * sum = sum / num_pairs
+    # NSS = (2 / N(N-1)) * sum = sum / num_pairs
     if num_pairs == 0:
         return float("nan")
     
-    ncs = total_score / num_pairs
-    return ncs
+    nss = total_score / num_pairs
+    return nss
 
 
 def parse_ranking_from_json(parsed_json: Optional[Dict[str, Any]]) -> Optional[Dict[str, int]]:
@@ -1425,8 +1425,8 @@ Explanation:"""
                         "ranking": None
                     }
             
-            # Compute NCS from rankings
-            ncs = compute_narrative_coherence_score(rankings, alpha=NCS_ALPHA)
+            # Compute NSS from rankings
+            nss = compute_narrative_semantic_similarity(rankings, alpha=NSS_ALPHA)
             
             # For now, use the first successful draft as the final explanation
             # In a full implementation, we would use a refiner model here
@@ -1458,7 +1458,8 @@ Explanation:"""
                 final_drafts.append({
                     "index": i,
                     "status": "success" if d is not None else "failed",
-                    "ranking": r
+                    "ranking": r,
+                    "explanation": d["explanation"] if d is not None else None
                 })
             
             # Yield final result
@@ -1472,7 +1473,7 @@ Explanation:"""
                 "reasoning": final_draft["parsed_json"].get("reasoning") if final_draft["parsed_json"] else None,
                 "metrics": metrics,
                 "drafts": final_drafts,
-                "ncs": ncs if not math.isnan(ncs) else None,
+                "nss": nss if not math.isnan(nss) else None,
                 "status": "success"
             }
             
@@ -1523,11 +1524,15 @@ Explanation:"""
                 variation = (draft_idx + i) % 2
                 ranking[feature.lower()] = base_rank + variation
             
+            # Create a demo explanation for this draft (will be replaced with actual demo data in frontend)
+            draft_explanation = f"Draft {draft_idx + 1} explanation placeholder"
+            
             rankings.append(ranking)
             drafts.append({
                 "index": draft_idx,
                 "status": "success",
-                "ranking": ranking
+                "ranking": ranking,
+                "explanation": draft_explanation
             })
             
             # Yield success status
@@ -1538,8 +1543,8 @@ Explanation:"""
                 "ranking": ranking
             }
         
-        # Compute NCS
-        ncs = compute_narrative_coherence_score(rankings, alpha=NCS_ALPHA)
+        # Compute NSS
+        nss = compute_narrative_semantic_similarity(rankings, alpha=NSS_ALPHA)
         
         # Generate the demo explanation
         demo_result = self._generate_dummy_explanation(factual, counterfactual)
@@ -1560,7 +1565,7 @@ Explanation:"""
                 "avg_ff": 1.0
             },
             "drafts": drafts,
-            "ncs": ncs if not math.isnan(ncs) else None,
+            "nss": nss if not math.isnan(nss) else None,
             "status": "demo",
             "warning": "CUDA is not available. The generated explanation is just a template."
         }
