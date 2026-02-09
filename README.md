@@ -1,4 +1,4 @@
-# Counterfactual Narrative Explainer Web Application
+# Narrative Explanation Systems with SLMs
 
 A modern, full-stack web application for generating human-readable counterfactual narrative explanations using Large Language Models (LLMs). This application provides an intuitive interface for exploring how changes in input features affect model predictions through natural language explanations.
 
