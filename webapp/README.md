@@ -220,7 +220,7 @@ Generates a narrative explanation.
   "use_refiner": false,
   "temperature": 0.6,
   "top_p": 0.8,
-  "max_tokens": 4096
+  "max_tokens": 5000
 }
 ```
 

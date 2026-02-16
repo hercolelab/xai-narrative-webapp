@@ -100,6 +100,8 @@ function App() {
   const [datasets, setDatasets] = useState([]);
   const [datasetInfo, setDatasetInfo] = useState({});
   const [models, setModels] = useState([]);
+  const [modelsWithAdapters, setModelsWithAdapters] = useState({});
+  const [adapterModel, setAdapterModel] = useState(null);
   const [selectedDataset, setSelectedDataset] = useState('');
   const [selectedModel, setSelectedModel] = useState('');
   const [generationType, setGenerationType] = useState('');
@@ -115,6 +117,8 @@ function App() {
   const [drafts, setDrafts] = useState([]); // Draft statuses for self-refinement mode
   const [nss, setNss] = useState(null); // Narrative Stability Score
   const [warning, setWarning] = useState(null); // Model warning (CUDA, no models found, etc.)
+  const [explanationExtractionWarning, setExplanationExtractionWarning] = useState(false);
+  const [prompt, setPrompt] = useState(null);
   const [loading, setLoading] = useState(false);
   const [loadingExample, setLoadingExample] = useState(false);
   const [loadingCounterfactual, setLoadingCounterfactual] = useState(false);
@@ -159,6 +163,8 @@ function App() {
     const fetchModels = async () => {
       if (!selectedDataset) {
         setModels([]);
+        setModelsWithAdapters({});
+        setAdapterModel(null);
         setSelectedModel('');
         return;
       }
@@ -169,6 +175,8 @@ function App() {
       try {
         const response = await axios.get(`${API_BASE_URL}/api/models/${selectedDataset}`);
         setModels(response.data.models || []);
+        setModelsWithAdapters(response.data.models_with_adapters || {});
+        setAdapterModel(response.data.adapter_model || null);
         setSelectedModel(''); // Reset model selection when dataset changes
         
         // Show warning if present (not an error)
@@ -219,12 +227,27 @@ function App() {
     setTargetVariableChange({});
     setMetrics(null);
     setDrafts([]);
+    setExplanationExtractionWarning(false);
+    setPrompt(null);
     setNss(null);
     setGenerationType('');
     // Don't clear model warning here - it will be updated when models are loaded
     setFineTuned(true); // Reset fine-tuned checkbox to default
     // Don't clear error here as it might be about dataset/model loading
   }, [selectedDataset]);
+
+  // Update fine-tuned checkbox when model changes
+  useEffect(() => {
+    if (selectedModel && modelsWithAdapters) {
+      // Automatically enable fine-tuned if adapter is available
+      const hasAdapter = modelsWithAdapters[selectedModel];
+      if (hasAdapter) {
+        setFineTuned(true);
+      } else {
+        setFineTuned(false);
+      }
+    }
+  }, [selectedModel, modelsWithAdapters]);
 
   const handleLoadExample = async () => {
     if (!selectedDataset) {
@@ -240,6 +263,8 @@ function App() {
     setFeatureChanges({});
     setTargetVariableChange({});
     setMetrics(null);
+    setExplanationExtractionWarning(false);
+    setPrompt(null);
     // Don't clear warning - it should persist throughout the process
 
     try {
@@ -269,6 +294,8 @@ function App() {
     setFeatureChanges({});
     setTargetVariableChange({});
     setMetrics(null);
+    setExplanationExtractionWarning(false);
+    setPrompt(null);
     // Don't clear warning - it should persist throughout the process
 
     try {
@@ -301,6 +328,10 @@ function App() {
       setError('Please load an example first');
       return;
     }
+
+    // Check if fine-tuned is enabled but adapter is not available
+    const hasAdapter = modelsWithAdapters && modelsWithAdapters[selectedModel];
+    const effectiveFineTuned = fineTuned && hasAdapter;
 
     setLoading(true);
     setError(null);
@@ -384,10 +415,12 @@ function App() {
 
             setDrafts(prev => {
               const newDrafts = [...prev];
+              const draft = demoData.drafts[i];
               newDrafts[i] = {
-                status: demoData.drafts[i].status,
-                ranking: null,
-                explanation: demoData.drafts[i].text
+                status: draft.status,
+                ranking: draft.ranking ?? null,
+                explanation: draft.text,
+                explanation_extracted: true
               };
               return newDrafts;
             });
@@ -401,6 +434,8 @@ function App() {
           setTargetVariableChange(targetVariableChange);
           setMetrics(metrics);
           setNss(demoData.nss);
+          setExplanationExtractionWarning(false);
+          setPrompt(null);
         } else {
           // One-shot mode
           setExplanation(demoData.narrative);
@@ -409,6 +444,8 @@ function App() {
           setFeatureChanges(featureChanges);
           setTargetVariableChange(targetVariableChange);
           setMetrics(metrics);
+          setExplanationExtractionWarning(false);
+          setPrompt(null);
         }
       } catch (err) {
         setError(`Demo mode error: ${err.message}`);
@@ -433,10 +470,10 @@ function App() {
             factual,
             counterfactual,
             generation_type: generationType,
-            fine_tuned: fineTuned,
+            fine_tuned: effectiveFineTuned,
             temperature: 0.6,
             top_p: 0.8,
-            max_tokens: 4096
+            max_tokens: 5000
           })
         });
 
@@ -482,6 +519,8 @@ function App() {
                   setMetrics(data.metrics || null);
                   setNss(data.nss);
                   setDrafts(data.drafts || []);
+                  setExplanationExtractionWarning(data.explanation_extraction_warning || false);
+                  setPrompt(data.prompt || null);
                 } else if (data.type === 'error') {
                   throw new Error(data.message);
                 }
@@ -506,10 +545,10 @@ function App() {
           factual,
           counterfactual,
           generation_type: generationType,
-          fine_tuned: fineTuned,
+          fine_tuned: effectiveFineTuned,
           temperature: 0.6,
           top_p: 0.8,
-          max_tokens: 4096
+          max_tokens: 5000
         });
 
         setExplanation(response.data.explanation);
@@ -518,6 +557,8 @@ function App() {
         setFeatureChanges(response.data.feature_changes || {});
         setTargetVariableChange(response.data.target_variable_change || {});
         setMetrics(response.data.metrics || null);
+        setExplanationExtractionWarning(response.data.explanation_extraction_warning || false);
+        setPrompt(response.data.prompt || null);
       } catch (err) {
         setError(`Failed to generate explanation: ${err.response?.data?.detail || err.message}`);
         console.error('Error generating explanation:', err);
@@ -608,6 +649,7 @@ function App() {
               />
               <ModelSelector
                 models={models}
+                modelsWithAdapters={modelsWithAdapters}
                 selectedModel={selectedModel}
                 onModelChange={setSelectedModel}
                 loading={loading || loadingExample || loadingModels}
@@ -620,24 +662,70 @@ function App() {
             </div>
 
             {/* Fine-tuned checkbox - only show when model is selected */}
-            {selectedModel && (
+            {selectedModel && selectedModel !== 'demo' && (
               <div className="mb-6">
-                <label className="flex items-center gap-3 cursor-pointer group">
-                  <input
-                    type="checkbox"
-                    checked={fineTuned}
-                    onChange={(e) => setFineTuned(e.target.checked)}
-                    disabled={loading || loadingExample}
-                    className="w-5 h-5 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-2 focus:ring-accent-500 focus:ring-offset-2 focus:ring-offset-dark-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed theme-checkbox"
-                  />
-                  <span className="text-sm text-neutral-300 group-hover:text-white transition-colors">
-                    Use Fine-tuned Model (LoRA)
-                  </span>
-                </label>
+                <div className="relative group">
+                  <label className={`flex items-center gap-3 ${modelsWithAdapters && modelsWithAdapters[selectedModel] ? 'cursor-pointer' : 'cursor-not-allowed'}`}>
+                    <input
+                      type="checkbox"
+                      checked={fineTuned}
+                      onChange={(e) => setFineTuned(e.target.checked)}
+                      disabled={loading || loadingExample || !(modelsWithAdapters && modelsWithAdapters[selectedModel])}
+                      className="w-5 h-5 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-2 focus:ring-accent-500 focus:ring-offset-2 focus:ring-offset-dark-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed theme-checkbox"
+                    />
+                    <span className={`text-sm transition-colors ${modelsWithAdapters && modelsWithAdapters[selectedModel] ? 'text-neutral-300 group-hover:text-white' : 'text-neutral-500'}`}>
+                      Use Fine-tuned Model (LoRA)
+                    </span>
+                  </label>
+                  
+                  {/* Tooltip for disabled checkbox */}
+                  {!(modelsWithAdapters && modelsWithAdapters[selectedModel]) && (() => {
+                    const adapterModelsList = modelsWithAdapters
+                      ? Object.entries(modelsWithAdapters).filter(([, has]) => has).map(([m]) => m)
+                      : [];
+                    return (
+                      <div className="absolute left-0 top-full mt-2 w-96 p-3 theme-tooltip rounded-lg shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 z-10">
+                        <div className="flex items-start gap-2">
+                          <svg className="w-4 h-4 flex-shrink-0 mt-0.5 theme-finetuned-tooltip-icon" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                          </svg>
+                          <div>
+                            <p className="text-xs text-neutral-300 font-medium">No fine-tuned adapter available</p>
+                            <p className="text-xs text-neutral-500 mt-1">
+                              For the <span className="theme-accent-text font-medium">{selectedDataset}</span> dataset, fine-tuned adapters are available for:
+                            </p>
+                            {adapterModelsList.length > 0 ? (
+                              <ul className="text-xs theme-accent-text mt-1 list-disc list-inside space-y-0.5">
+                                {adapterModelsList.map((m) => (
+                                  <li key={m}>{m}</li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="text-xs text-neutral-500 mt-1">No models with adapters for this dataset.</p>
+                            )}
+                            <p className="text-xs text-neutral-500 mt-2">
+                              You can still use this model in base (non-fine-tuned) mode.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+                
                 <p className="mt-1 text-xs text-neutral-500 ml-8">
-                  {fineTuned 
-                    ? "Using fine-tuned model with LoRA adapter from checkpoint"
-                    : "Using base model without fine-tuning"}
+                  {modelsWithAdapters && modelsWithAdapters[selectedModel] ? (
+                    fineTuned 
+                      ? "Using fine-tuned model with LoRA adapter from checkpoint"
+                      : "Using base model without fine-tuning"
+                  ) : (
+                    (() => {
+                      const adapterModelsList = modelsWithAdapters
+                        ? Object.entries(modelsWithAdapters).filter(([, has]) => has).map(([m]) => m)
+                        : [];
+                      return `No adapter available for this dataset. Available for: ${adapterModelsList.length > 0 ? adapterModelsList.join(', ') : 'none'}`;
+                    })()
+                  )}
                 </p>
               </div>
             )}
@@ -788,6 +876,8 @@ function App() {
             generationType={generationType}
             selectedModel={selectedModel}
             selectedDataset={selectedDataset}
+            explanationExtractionWarning={explanationExtractionWarning}
+            prompt={prompt}
           />
         </section>
       </main>

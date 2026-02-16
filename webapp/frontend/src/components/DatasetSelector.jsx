@@ -21,7 +21,7 @@ const DatasetSelector = ({ datasets, datasetInfo, selectedDataset, onDatasetChan
 
   const allDatasets = datasets && datasets.length > 0 
     ? datasets 
-    : ['adult', 'titanic', 'california', 'diabetes'];
+    : ['california', 'diabetes', 'adult', 'titanic'];
 
   return (
     <div className="w-full">

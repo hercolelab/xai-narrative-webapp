@@ -1,6 +1,6 @@
 import React from 'react';
 
-const ModelSelector = ({ models, selectedModel, onModelChange, loading }) => {
+const ModelSelector = ({ models, modelsWithAdapters, selectedModel, onModelChange, loading }) => {
   const getModelIcon = (model) => {
     const lower = model?.toLowerCase() || '';
     if (lower === 'demo') return '🎭';
@@ -15,6 +15,13 @@ const ModelSelector = ({ models, selectedModel, onModelChange, loading }) => {
     if (model?.toLowerCase() === 'demo') {
       return '🎭 Demo (Example Output)';
     }
+    
+    // Check if model has fine-tuned adapter
+    const hasAdapter = modelsWithAdapters && modelsWithAdapters[model];
+    if (hasAdapter) {
+      return `${model} ✓ (fine-tuned)`;
+    }
+    
     return model;
   };
 
@@ -46,6 +53,9 @@ const ModelSelector = ({ models, selectedModel, onModelChange, loading }) => {
         <p className="mt-2 text-xs text-neutral-500 flex items-center gap-1">
           <span className="w-1.5 h-1.5 rounded-full theme-accent-dot"></span>
           Ready to generate with {selectedModel}
+          {modelsWithAdapters && modelsWithAdapters[selectedModel] && (
+            <span className="text-green-400 ml-1">• Fine-tuned adapter available</span>
+          )}
         </p>
       )}
     </div>

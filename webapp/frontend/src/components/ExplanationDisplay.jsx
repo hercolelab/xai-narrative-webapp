@@ -3,10 +3,11 @@ import demoNarratives from '../demoNarratives';
 
 const NUM_NARRATIVES = 5;
 
-const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loading, error, drafts = [], nss = null, generationType = 'one-shot', selectedModel = '', selectedDataset = '' }) => {
+const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loading, error, drafts = [], nss = null, generationType = 'one-shot', selectedModel = '', selectedDataset = '', explanationExtractionWarning = false, prompt = null }) => {
   const [copied, setCopied] = useState(false);
   const [showJsonModal, setShowJsonModal] = useState(false);
   const [showRawOutputModal, setShowRawOutputModal] = useState(false);
+  const [showPromptModal, setShowPromptModal] = useState(false);
   const [selectedDraft, setSelectedDraft] = useState(null);
   const [showDraftModal, setShowDraftModal] = useState(false);
   
@@ -253,13 +254,18 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
                           ? demoNarratives[selectedDataset].drafts[idx].text 
                           : draft.explanation || '';
                         const draftStatus = draft?.status || 'pending';
+                        const explanationExtracted = draft?.explanation_extracted !== false;
                         
                         return (
                           <button
                             key={idx}
                             onClick={() => {
                               if (draftStatus === 'success' && draftText) {
-                                setSelectedDraft({ number: idx + 1, text: draftText });
+                                setSelectedDraft({
+                                  number: idx + 1,
+                                  text: draftText,
+                                  ranking: draft.ranking ?? null
+                                });
                                 setShowDraftModal(true);
                               }
                             }}
@@ -271,12 +277,20 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
                                 ? 'bg-amber-500/20 dark:bg-amber-500/20 border-amber-500/30 dark:border-amber-500/30 cursor-not-allowed'
                                 : 'theme-draft-button cursor-not-allowed opacity-50'
                             }`}
-                            title={draftStatus === 'success' ? `Draft ${idx + 1}: Click to view` : `Draft ${idx + 1}: ${draftStatus}`}
+                            title={draftStatus === 'success' ? `Draft ${idx + 1}: Click to view${!explanationExtracted ? ' (explanation not extracted)' : ''}` : `Draft ${idx + 1}: ${draftStatus}`}
                           >
                             <div className="flex flex-col items-center gap-1">
                               <span className="text-xs font-semibold theme-draft-button-text">Draft {idx + 1}</span>
                               {draftStatus === 'success' ? (
-                                <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                                <div className="flex items-center gap-0.5">
+                                  {!explanationExtracted ? (
+                                    <svg className="w-3 h-3 text-amber-500" fill="currentColor" viewBox="0 0 20 20" title="Explanation not extracted from JSON">
+                                      <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92z" clipRule="evenodd" />
+                                    </svg>
+                                  ) : (
+                                    <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                                  )}
+                                </div>
                               ) : draftStatus === 'failed' ? (
                                 <svg className="w-3 h-3 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -310,6 +324,32 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
             </div>
           </div>
         </div>
+
+        {/* Explanation Extraction Warning */}
+        {explanationExtractionWarning && (
+          <div className="mx-6 mb-4 p-4 rounded-xl border-l-4 border-amber-500/80 bg-amber-950/20">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <svg className="w-5 h-5 text-amber-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                  <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                </svg>
+                <div>
+                  <h4 className="text-sm font-medium text-amber-300">Explanation Extraction Warning</h4>
+                  <p className="text-sm text-amber-400/90 mt-0.5">
+                    The model output could not be parsed. All required JSON fields (feature_changes, reasoning, features_importance_ranking, explanation) were not present or valid. The narrative above shows an error message; raw output is not displayed.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowRawOutputModal(true)}
+                className="btn btn-secondary text-sm whitespace-nowrap flex-shrink-0"
+                title="View full model output"
+              >
+                Full SLM Output
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Explanation Content */}
         <div className="p-6 pt-4 theme-narrative-content">
@@ -376,6 +416,17 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
             >
               <svg className="w-4 h-4 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+            </button>
+            
+            <button
+              onClick={() => setShowPromptModal(true)}
+              disabled={!prompt}
+              className={`btn btn-secondary text-sm ${prompt ? '' : 'opacity-50 cursor-not-allowed'}`}
+              title={prompt ? "Show Prompt" : "Prompt not available"}
+            >
+              <svg className="w-4 h-4 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
               </svg>
             </button>
           </div>
@@ -482,6 +533,59 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
         </div>
       )}
 
+      {/* Prompt Modal */}
+      {showPromptModal && prompt && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          {/* Backdrop */}
+          <div 
+            className="absolute inset-0 bg-dark-950/80 backdrop-blur-md animate-fade-in"
+            onClick={() => setShowPromptModal(false)}
+          ></div>
+          
+          {/* Modal */}
+          <div 
+            className="relative w-full max-w-4xl max-h-[85vh] bg-dark-850 border border-dark-700 rounded-2xl overflow-hidden shadow-elevated animate-fade-in-up"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="sticky top-0 z-10 px-6 py-4 bg-dark-850 border-b border-dark-700">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl theme-accent-icon-bg flex items-center justify-center">
+                    <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-semibold text-white">Model Prompt</h3>
+                    <p className="text-xs text-neutral-500">
+                      {generationType === 'one-shot' ? 'Worker prompt (one-shot)' : 'Refiner prompt (self-refinement)'} sent to the model
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowPromptModal(false)}
+                  className="w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:text-white hover:bg-dark-700 transition-colors"
+                >
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Content */}
+            <div className="p-6 overflow-y-auto max-h-[calc(85vh-80px)]">
+              <div className="bg-dark-900 rounded-xl p-4 border border-dark-700">
+                <pre className="whitespace-pre-wrap text-sm text-neutral-300 font-mono leading-relaxed">
+                  {prompt}
+                </pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Draft Modal */}
       {showDraftModal && selectedDraft && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
@@ -531,6 +635,29 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
                     </p>
                   ))}
                 </div>
+                {selectedDraft.ranking && Object.keys(selectedDraft.ranking).length > 0 && (
+                  <div className="mt-5 pt-4 border-t border-dark-600">
+                    <p className="text-xs font-semibold text-neutral-400 uppercase tracking-wider mb-2">
+                      Feature importance ranking
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {Object.entries(selectedDraft.ranking)
+                        .sort(([, a], [, b]) => (Number(a) || 0) - (Number(b) || 0))
+                        .map(([feature, rank]) => (
+                          <span
+                            key={feature}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-dark-700/80 text-neutral-300 text-sm font-mono"
+                          >
+                            <span className="text-amber-400/90 font-semibold">{rank}</span>
+                            <span>{feature}</span>
+                          </span>
+                        ))}
+                    </div>
+                    <p className="text-xs text-neutral-500 mt-2">
+                      Lower rank = higher importance. NSS measures agreement of these rankings across drafts.
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>

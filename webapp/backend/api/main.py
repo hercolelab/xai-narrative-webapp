@@ -67,9 +67,8 @@ async def get_all_models():
 @app.get("/api/models/{dataset}")
 async def get_models_for_dataset(dataset: str):
     """
-    Get available fine-tuned models for a specific dataset.
-    Scans the outputs_unsloth folder for available model checkpoints.
-    Includes demo model if CUDA is not available or no models found.
+    Get available models for a specific dataset with adapter availability.
+    Returns all CUDA models when available, indicating which have fine-tuned adapters.
     """
     try:
         # Validate dataset
@@ -80,9 +79,6 @@ async def get_models_for_dataset(dataset: str):
                 detail=f"Dataset '{dataset}' not found. Available: {available_datasets}"
             )
         
-        # Get models available for this dataset
-        models = pipeline_service.get_available_models_for_dataset(dataset)
-        
         # Check CUDA availability
         try:
             import torch
@@ -90,17 +86,25 @@ async def get_models_for_dataset(dataset: str):
         except ImportError:
             CUDA_AVAILABLE = False
         
-        # Add demo model if CUDA is not available or no models found
-        warning = None
-        if not CUDA_AVAILABLE or not models:
-            if "demo" not in models:
-                models.append("demo")
-            if not CUDA_AVAILABLE:
-                warning = "CUDA is not available. Demo model is available for testing."
-            elif not models or len(models) == 1:  # Only demo model
-                warning = f"No fine-tuned models found for dataset: {dataset}. Demo model is available for testing."
+        # Get models with adapter availability info
+        models_with_adapters = pipeline_service.get_available_models_with_adapters(dataset)
         
-        response = {"models": models, "dataset": dataset}
+        # Build response
+        warning = None
+        if not CUDA_AVAILABLE:
+            warning = "CUDA is not available. Demo model is available for testing."
+        
+        # Get the model that has adapters for this dataset
+        from services.pipeline_service import DATASET_ADAPTER_MAPPING
+        adapter_model_key = DATASET_ADAPTER_MAPPING.get(dataset.lower())
+        adapter_model_display = adapter_model_key[8:] if adapter_model_key and adapter_model_key.startswith("unsloth_") else adapter_model_key
+        
+        response = {
+            "models": list(models_with_adapters.keys()),
+            "models_with_adapters": models_with_adapters,
+            "adapter_model": adapter_model_display,
+            "dataset": dataset
+        }
         if warning:
             response["warning"] = warning
         
@@ -124,6 +128,29 @@ async def get_example(dataset: str):
         return example
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/adapter-available/{dataset}/{model}")
+async def check_adapter_available(dataset: str, model: str):
+    """
+    Check if a fine-tuned adapter is available for the given dataset and model.
+    """
+    try:
+        available = pipeline_service.can_use_finetuned_adapter(dataset, model)
+        
+        # Get the model that has adapters for this dataset
+        from services.pipeline_service import DATASET_ADAPTER_MAPPING
+        adapter_model_key = DATASET_ADAPTER_MAPPING.get(dataset.lower())
+        adapter_model_display = adapter_model_key[8:] if adapter_model_key and adapter_model_key.startswith("unsloth_") else adapter_model_key
+        
+        return {
+            "available": available,
+            "dataset": dataset,
+            "model": model,
+            "adapter_model": adapter_model_display
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

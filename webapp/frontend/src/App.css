@@ -927,6 +927,16 @@
     color: rgb(55, 65, 81);
   }
 
+  /* Fine-tuned tooltip warning icon - amber in dark, blue in light */
+  .theme-finetuned-tooltip-icon {
+    color: rgb(251, 191, 36);
+    transition: color 0.3s ease;
+  }
+
+  [data-theme="light"] .theme-finetuned-tooltip-icon {
+    color: rgb(37, 99, 235);
+  }
+
   .theme-tooltip-arrow {
     background-color: rgb(10, 10, 11);
     border-right: 1px solid rgba(42, 42, 46, 0.8);

@@ -14,7 +14,7 @@ class ExplainRequest(BaseModel):
     fine_tuned: bool = Field(default=True, description="Whether to use fine-tuned model with LoRA adapter")
     temperature: float = Field(default=0.6, ge=0.0, le=2.0, description="Generation temperature")
     top_p: float = Field(default=0.8, ge=0.0, le=1.0, description="Top-p sampling parameter")
-    max_tokens: int = Field(default=4096, ge=1, le=8192, description="Maximum tokens to generate")
+    max_tokens: int = Field(default=5000, ge=1, le=8192, description="Maximum tokens to generate")
 
 
 class DraftStatus(BaseModel):
@@ -23,6 +23,7 @@ class DraftStatus(BaseModel):
     status: Literal["pending", "loading", "success", "failed"] = Field(..., description="Draft status")
     ranking: Optional[Dict[str, int]] = Field(default=None, description="Feature importance ranking from this draft")
     explanation: Optional[str] = Field(default=None, description="Draft narrative explanation text")
+    explanation_extracted: Optional[bool] = Field(default=True, description="False when 'explanation' was not extracted from JSON")
 
 
 class MetricsResponse(BaseModel):
@@ -46,6 +47,8 @@ class ExplainResponse(BaseModel):
     nss: Optional[float] = Field(default=None, description="Narrative Stability Score for self-refinement mode")
     status: str = Field(default="success", description="Status of the request")
     warning: Optional[str] = Field(default=None, description="Warning message if this is a demo/example")
+    explanation_extraction_warning: Optional[bool] = Field(default=False, description="True when 'explanation' was not extracted from JSON")
+    prompt: Optional[str] = Field(default=None, description="The prompt sent to the model (worker or refiner)")
 
 
 class ErrorResponse(BaseModel):

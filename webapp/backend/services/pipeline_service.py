@@ -56,9 +56,53 @@ except ImportError:
     TRANSFORMERS_AVAILABLE = False
     AutoTokenizer = None
 
+# Try to import torch for CUDA availability check
+try:
+    import torch
+    CUDA_AVAILABLE = torch.cuda.is_available()
+except ImportError:
+    CUDA_AVAILABLE = False
+
+# Define CUDA-only models (from llm_kd utils.py)
+CUDA_MODEL_MAPPING = {
+    "unsloth_qwen_0.5B": "unsloth/Qwen2.5-0.5B-Instruct",
+    "unsloth_qwen3_0.6B": "unsloth/Qwen3-0.6B",
+    "unsloth_llama_1B-Instruct": "unsloth/Llama-3.2-1B-Instruct",
+    "unsloth_deepseek_r1_qwen_1.5B": "unsloth/DeepSeek-R1-Distill-Qwen-1.5B",
+    "unsloth_qwen3_1.7B": "unsloth/Qwen3-1.7B",
+    "qwen3_30B_A3B": "QuantTrio/Qwen3-30B-A3B-Thinking-2507-AWQ",  # Teacher model
+}
+
+# Dataset-to-adapter mapping (fine-tuned adapters available on HuggingFace)
+DATASET_ADAPTER_MAPPING = {
+    "titanic": "unsloth_qwen3_0.6B",      # qwen3-0.6B
+    "california": "unsloth_llama_1B-Instruct",  # LLama3-1B
+    "diabetes": "unsloth_qwen_0.5B",      # Qwen2.5-0.5B
+    "adult": "unsloth_deepseek_r1_qwen_1.5B",  # DeepSeek-R1-Distill-Qwen-1.5B
+}
+
+# Hugging Face repository mapping for LoRA adapters
+# Format: (dataset, model, role) -> HF repo path
+HUGGINGFACE_ADAPTER_REPOS = {
+    ("titanic", "qwen3_0.6B", "worker"): "phdsilver22/counterfactual_generator-titanic-qwen3_0.6B-worker",
+    ("titanic", "qwen3_0.6B", "refiner"): "phdsilver22/counterfactual_generator-titanic-qwen3_0.6B-refiner",
+    ("titanic", "deepseek_r1_qwen_1.5B", "worker"): "phdsilver22/counterfactual_generator-titanic-deepseek_r1_qwen_1.5B-worker",
+    ("titanic", "deepseek_r1_qwen_1.5B", "refiner"): "phdsilver22/counterfactual_generator-titanic-deepseek_r1_qwen_1.5B-refiner",
+    ("california", "llama_1B-Instruct", "worker"): "phdsilver22/counterfactual_generator-california-llama_1B-Instruct-worker",
+    ("california", "llama_1B-Instruct", "refiner"): "phdsilver22/counterfactual_generator-california-llama_1B-Instruct-refiner",
+    ("diabetes", "qwen_0.5B", "worker"): "phdsilver22/counterfactual_generator-diabetes-qwen_0.5B-worker",
+    ("diabetes", "qwen_0.5B", "refiner"): "phdsilver22/counterfactual_generator-diabetes-qwen_0.5B-refiner",
+    ("diabetes", "llama_1B-Instruct", "worker"): "phdsilver22/counterfactual_generator-diabetes-llama_1B-Instruct-worker",
+    ("diabetes", "llama_1B-Instruct", "refiner"): "phdsilver22/counterfactual_generator-diabetes-llama_1B-Instruct-refiner",
+    ("diabetes", "qwen3_1.7B", "worker"): "phdsilver22/counterfactual_generator-diabetes-qwen3_1.7B-worker",
+    ("diabetes", "qwen3_1.7B", "refiner"): "phdsilver22/counterfactual_generator-diabetes-qwen3_1.7B-refiner",
+    ("adult", "deepseek_r1_qwen_1.5B", "worker"): "phdsilver22/counterfactual_generator-adult-deepseek_r1_qwen_1.5B-worker",
+    ("adult", "deepseek_r1_qwen_1.5B", "refiner"): "phdsilver22/counterfactual_generator-adult-deepseek_r1_qwen_1.5B-refiner",
+}
+
 # Try to import from llm_kd
 try:
-    from src.utils import MODEL_MAPPING, prompt as prompt_template, get_checkpoint_step, CHECKPOINT_MAPPING
+    from src.utils import MODEL_MAPPING, prompt as prompt_template, prompt_ref, get_checkpoint_step, CHECKPOINT_MAPPING
     from data.dataset_kb import dataset_kb
     # Optional import
     try:
@@ -66,11 +110,24 @@ try:
     except ImportError:
         test_counterfactuals = {}
     print("✓ Successfully imported from llm_kd")
+    
+    # Override MODEL_MAPPING with CUDA_MODEL_MAPPING if CUDA is available
+    if CUDA_AVAILABLE:
+        MODEL_MAPPING = CUDA_MODEL_MAPPING
+        print("✓ Using CUDA-only models from configuration")
+    else:
+        print("⚠️ CUDA not available, will use demo mode")
+        MODEL_MAPPING = {}
 except ImportError as e:
     print(f"Warning: Could not import from llm_kd: {e}")
     print("Make sure the llm_kd repository is available and dependencies are installed")
-    MODEL_MAPPING = {}
+    if CUDA_AVAILABLE:
+        MODEL_MAPPING = CUDA_MODEL_MAPPING
+        print("✓ Using CUDA-only models from configuration (fallback)")
+    else:
+        MODEL_MAPPING = {}
     prompt_template = None
+    prompt_ref = None
     dataset_kb = {}
     test_counterfactuals = {}
     get_checkpoint_step = None
@@ -90,6 +147,7 @@ except ImportError:
 NUM_NARRATIVES = 5
 MAX_ATTEMPTS = 2
 NSS_ALPHA = 0.6
+EXTRACTION_FAILED_MSG = "The model output could not be parsed. See Full SLM Output for details."
 
 
 # ============================================================================
@@ -293,7 +351,7 @@ class PipelineService:
         self.default_params = {
             "temperature": 0.6,
             "top_p": 0.8,
-            "max_tokens": 4096,
+            "max_tokens": 5000,
             "repetition_penalty": 1.05,
             "max_model_len": 8192
         }
@@ -355,7 +413,7 @@ class PipelineService:
     def get_available_datasets(self) -> list:
         """Get list of available datasets from the loaded JSON file."""
         # Always return all four datasets in a consistent order
-        default_datasets = ['adult', 'titanic', 'california', 'diabetes']
+        default_datasets = ['california', 'diabetes', 'adult', 'titanic']
         
         if self.counterfactuals_data:
             # Get datasets from JSON
@@ -410,54 +468,87 @@ class PipelineService:
         
         return sorted(models)
     
-    def _get_lora_checkpoint_path(self, dataset: str, model_name: str) -> Optional[str]:
+    def _get_lora_checkpoint_path(self, dataset: str, model_name: str, role: str = "worker") -> Optional[str]:
         """
-        Get the path to the LoRA checkpoint for a given dataset and model.
+        Get the Hugging Face repository path for the LoRA adapter.
+        
+        Uses only Hugging Face repositories - no local checkpoint lookup.
+        
+        Args:
+            dataset: Dataset name (e.g., 'titanic', 'california', etc.)
+            model_name: Model name without 'unsloth_' prefix
+            role: Either "worker" or "refiner" (default: "worker")
+        
+        Returns:
+            Hugging Face repo path (e.g., "phdsilver22/repo-name"), or None if not available
         """
-        # Add back the 'unsloth_' prefix for folder lookup
-        folder_model_name = f"unsloth_{model_name}"
+        # Look up Hugging Face repository (supports multiple models per dataset)
+        hf_repo_key = (dataset.lower(), model_name, role)
+        hf_repo = HUGGINGFACE_ADAPTER_REPOS.get(hf_repo_key)
         
-        model_folder = self.outputs_unsloth_dir / f"outputs_unsloth_{dataset}_worker" / folder_model_name
+        if hf_repo:
+            print(f"✓ Using Hugging Face adapter: {hf_repo}")
+            return hf_repo
         
-        if not model_folder.exists():
-            print(f"Warning: Model folder not found: {model_folder}")
-            return None
+        print(f"⚠️ No Hugging Face adapter found for {dataset}/{model_name}/{role}")
+        return None
+    
+    def can_use_finetuned_adapter(self, dataset: str, model_name: str) -> bool:
+        """
+        Check if a fine-tuned adapter is available for the given dataset and model.
         
-        # Find checkpoint directory (there should be one)
-        checkpoints = [
-            d for d in model_folder.iterdir()
-            if d.is_dir() and d.name.startswith("checkpoint-")
-        ]
+        Args:
+            dataset: Dataset name (e.g., 'titanic', 'california', 'diabetes', 'adult')
+            model_name: Model name without 'unsloth_' prefix
         
-        if not checkpoints:
-            print(f"Warning: No checkpoint found in {model_folder}")
-            return None
-        
-        # Get the checkpoint with the highest step number if multiple exist
-        def get_step(checkpoint_dir):
-            try:
-                return int(checkpoint_dir.name.split("-")[1])
-            except (IndexError, ValueError):
-                return 0
-        
-        best_checkpoint = max(checkpoints, key=get_step)
-        return str(best_checkpoint)
+        Returns:
+            bool: True if adapter is available, False otherwise
+        """
+        hf_repo_key = (dataset.lower(), model_name, "worker")
+        return hf_repo_key in HUGGINGFACE_ADAPTER_REPOS
     
     def get_available_models(self) -> list:
-        """Get list of available models from MODEL_MAPPING and Gemini."""
+        """Get list of available models from CUDA_MODEL_MAPPING."""
         models = []
         
-        # Add vLLM models from MODEL_MAPPING if CUDA is available
-        if CUDA_AVAILABLE and MODEL_MAPPING:
-            models.extend(list(MODEL_MAPPING.keys()))
-        
-        # Add Gemini model if available
-        if GEMINI_AVAILABLE and os.getenv("GOOGLE_API_KEY"):
-            models.append(self.GEMINI_MODEL_NAME)
+        # Add vLLM models from CUDA_MODEL_MAPPING if CUDA is available
+        if CUDA_AVAILABLE and CUDA_MODEL_MAPPING:
+            # Return model names without 'unsloth_' prefix for display
+            for model_key in CUDA_MODEL_MAPPING.keys():
+                if model_key.startswith("unsloth_"):
+                    models.append(model_key[8:])  # Remove 'unsloth_' prefix
+                else:
+                    models.append(model_key)
         
         # Add demo model if CUDA is not available
         if not CUDA_AVAILABLE:
             models.append("demo")
+        
+        return models
+    
+    def get_available_models_with_adapters(self, dataset: str) -> Dict[str, bool]:
+        """
+        Get all available models and whether they have fine-tuned adapters for the dataset.
+        
+        Returns:
+            Dict mapping model names (without prefix) to boolean indicating adapter availability
+        """
+        models = {}
+        
+        if CUDA_AVAILABLE and CUDA_MODEL_MAPPING:
+            for model_key in CUDA_MODEL_MAPPING.keys():
+                # Skip teacher model
+                if model_key == "qwen3_30B_A3B":
+                    continue
+                
+                display_name = model_key[8:] if model_key.startswith("unsloth_") else model_key
+                # Check if this model has adapters for the dataset (supports multiple per dataset)
+                has_adapter = (dataset.lower(), display_name, "worker") in HUGGINGFACE_ADAPTER_REPOS
+                models[display_name] = has_adapter
+        
+        # Demo model always available but no adapters
+        if not CUDA_AVAILABLE:
+            models["demo"] = False
         
         return models
     
@@ -568,12 +659,12 @@ class PipelineService:
         """Get the full HuggingFace model name from the short model name."""
         # Check if this is a fine-tuned model (without unsloth_ prefix)
         full_name = f"unsloth_{model_name}"
-        if full_name in MODEL_MAPPING:
-            return MODEL_MAPPING[full_name]
+        if full_name in CUDA_MODEL_MAPPING:
+            return CUDA_MODEL_MAPPING[full_name]
         
-        # Check directly in MODEL_MAPPING
-        if model_name in MODEL_MAPPING:
-            return MODEL_MAPPING[model_name]
+        # Check directly in CUDA_MODEL_MAPPING
+        if model_name in CUDA_MODEL_MAPPING:
+            return CUDA_MODEL_MAPPING[model_name]
         
         # Try with unsloth prefix variations
         variations = [
@@ -583,10 +674,10 @@ class PipelineService:
         ]
         
         for var in variations:
-            if var in MODEL_MAPPING:
-                return MODEL_MAPPING[var]
+            if var in CUDA_MODEL_MAPPING:
+                return CUDA_MODEL_MAPPING[var]
         
-        raise ValueError(f"Model {model_name} not found in MODEL_MAPPING")
+        raise ValueError(f"Model {model_name} not found in CUDA_MODEL_MAPPING. Available models: {list(CUDA_MODEL_MAPPING.keys())}")
     
     def _load_vllm_model(self, model_name: str, enable_lora: bool = False) -> Tuple[Any, Any]:
         """
@@ -706,19 +797,115 @@ class PipelineService:
             if isinstance(parsed, dict) and required_keys.issubset(parsed.keys()):
                 return parsed
         
-        # Priority 2: Objects with at least "feature_changes"
-        for cand in reversed(candidates):
-            parsed = self._try_load_json_snippet(cand)
-            if isinstance(parsed, dict) and "feature_changes" in parsed:
-                return parsed
-        
-        # Priority 3: Any dict object
-        for cand in reversed(candidates):
-            parsed = self._try_load_json_snippet(cand)
-            if isinstance(parsed, dict):
-                return parsed
-        
+        # Aligned with llm_kd: only return when ALL required keys are present
         return None
+    
+    def _generate_with_vllm_persistent(
+        self,
+        llm: Any,
+        tokenizer: Any,
+        model_name: str,
+        dataset: str,
+        prompt_text: str,
+        fine_tuned: bool = True,
+        adapter_name: str = "worker",
+        temperature: float = 0.6,
+        top_p: float = 0.8,
+        max_tokens: int = 5000,
+        max_retries: int = 2
+    ) -> Tuple[str, Optional[Dict[str, Any]]]:
+        """
+        Generate explanation using pre-loaded vLLM model (persistent in memory).
+        
+        This method does NOT load or unload the model - it expects a pre-loaded model.
+        Use this for batch generation (e.g., self-refinement) to avoid repeated loading.
+        
+        Args:
+            llm: Pre-loaded vLLM LLM instance
+            tokenizer: Pre-loaded tokenizer
+            model_name: Model name for adapter lookup
+            dataset: Dataset name for adapter lookup
+            prompt_text: Input prompt
+            fine_tuned: Whether to use fine-tuned adapter
+            adapter_name: Adapter identifier ("worker" or "refiner")
+            temperature: Generation temperature
+            top_p: Top-p sampling
+            max_tokens: Max tokens to generate
+            max_retries: Max retry attempts
+        
+        Returns:
+            Tuple of (raw_text, parsed_json_or_none)
+        """
+        # Create sampling parameters
+        sampling_params = SamplingParams(
+            temperature=temperature,
+            top_p=top_p,
+            repetition_penalty=self.default_params["repetition_penalty"],
+            max_tokens=max_tokens,
+            top_k=10,
+            stop=tokenizer.eos_token,
+        )
+        
+        # Get LoRA checkpoint path if fine-tuned (supports local and HuggingFace)
+        lora_request = None
+        if fine_tuned and LoRARequest is not None:
+            checkpoint_path = self._get_lora_checkpoint_path(dataset, model_name, role=adapter_name)
+            if checkpoint_path:
+                # Use unique adapter ID based on role to allow vLLM to cache adapters
+                adapter_id = 1 if adapter_name == "worker" else 2
+                lora_request = LoRARequest(
+                    f"counterfactual_{adapter_name}_adapter",
+                    adapter_id,
+                    checkpoint_path,  # Hugging Face repo (e.g., "phdsilver22/repo-name")
+                )
+                print(f"✓ Loading LoRA adapter ({adapter_name}) from HuggingFace: {checkpoint_path}")
+            else:
+                print(f"⚠️ No LoRA checkpoint found for {adapter_name}, using base model")
+        
+        # Format prompt with chat template
+        messages = [{"role": "user", "content": prompt_text}]
+        formatted_prompt = tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+        
+        generated_text = ""
+        parsed_json = None
+        
+        for attempt in range(max_retries):
+            try:
+                # Generate with or without LoRA
+                if fine_tuned and lora_request:
+                    outputs = llm.generate(
+                        [formatted_prompt],
+                        sampling_params=sampling_params,
+                        lora_request=lora_request,
+                    )
+                else:
+                    outputs = llm.generate(
+                        [formatted_prompt],
+                        sampling_params=sampling_params,
+                    )
+                
+                generated_text = outputs[0].outputs[0].text.strip()
+                
+                # Try to parse JSON
+                parsed_json = self._parse_json_response(generated_text)
+                
+                if parsed_json is not None:
+                    # Successfully parsed JSON
+                    print(f"✅ Successfully parsed JSON on attempt {attempt + 1}")
+                    break
+                else:
+                    print(f"⚠️ Attempt {attempt + 1}: JSON parsing failed, retrying...")
+                    
+            except Exception as e:
+                print(f"❌ Attempt {attempt + 1} failed with error: {e}")
+                if attempt == max_retries - 1:
+                    raise
+        
+        return generated_text, parsed_json
     
     def _generate_with_vllm(
         self,
@@ -728,14 +915,14 @@ class PipelineService:
         fine_tuned: bool = True,
         temperature: float = 0.6,
         top_p: float = 0.8,
-        max_tokens: int = 4096,
+        max_tokens: int = 5000,
         max_retries: int = 2
     ) -> Tuple[str, Optional[Dict[str, Any]]]:
         """
         Generate explanation using vLLM with optional retry on JSON parse failure.
         
         The model is loaded fresh for each request and unloaded after generation
-        to free up GPU memory.
+        to free up GPU memory. For batch generation, use _generate_with_vllm_persistent.
         
         Returns:
             Tuple of (raw_text, parsed_json_or_none)
@@ -746,74 +933,20 @@ class PipelineService:
             # Load model and tokenizer
             llm, tokenizer = self._load_vllm_model(model_name, enable_lora=fine_tuned)
             
-            # Create sampling parameters
-            sampling_params = SamplingParams(
+            # Use persistent method with loaded model
+            return self._generate_with_vllm_persistent(
+                llm=llm,
+                tokenizer=tokenizer,
+                model_name=model_name,
+                dataset=dataset,
+                prompt_text=prompt_text,
+                fine_tuned=fine_tuned,
+                adapter_name="worker",
                 temperature=temperature,
                 top_p=top_p,
-                repetition_penalty=self.default_params["repetition_penalty"],
                 max_tokens=max_tokens,
-                top_k=10,
-                stop=tokenizer.eos_token,
+                max_retries=max_retries
             )
-            
-            # Get LoRA checkpoint path if fine-tuned
-            lora_request = None
-            if fine_tuned and LoRARequest is not None:
-                checkpoint_path = self._get_lora_checkpoint_path(dataset, model_name)
-                if checkpoint_path:
-                    lora_request = LoRARequest(
-                        "counterfactual_explainability_adapter",
-                        1,
-                        checkpoint_path,
-                    )
-                    print(f"Using LoRA checkpoint: {checkpoint_path}")
-                else:
-                    print(f"Warning: No LoRA checkpoint found, using base model")
-            
-            # Format prompt with chat template
-            messages = [{"role": "user", "content": prompt_text}]
-            formatted_prompt = tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True
-            )
-            
-            generated_text = ""
-            parsed_json = None
-            
-            for attempt in range(max_retries):
-                try:
-                    # Generate
-                    if fine_tuned and lora_request:
-                        outputs = llm.generate(
-                            [formatted_prompt],
-                            sampling_params=sampling_params,
-                            lora_request=lora_request,
-                        )
-                    else:
-                        outputs = llm.generate(
-                            [formatted_prompt],
-                            sampling_params=sampling_params,
-                        )
-                    
-                    generated_text = outputs[0].outputs[0].text.strip()
-                    
-                    # Try to parse JSON
-                    parsed_json = self._parse_json_response(generated_text)
-                    
-                    if parsed_json is not None:
-                        # Successfully parsed JSON
-                        print(f"✅ Successfully parsed JSON on attempt {attempt + 1}")
-                        break
-                    else:
-                        print(f"⚠️ Attempt {attempt + 1}: JSON parsing failed, retrying...")
-                        
-                except Exception as e:
-                    print(f"❌ Attempt {attempt + 1} failed with error: {e}")
-                    if attempt == max_retries - 1:
-                        raise
-            
-            return generated_text, parsed_json
             
         finally:
             # Always unload the model to free GPU memory
@@ -937,7 +1070,7 @@ The resulting classification change reflects the model's learned patterns that a
         fine_tuned: bool = True,
         temperature: float = 0.6,
         top_p: float = 0.8,
-        max_tokens: int = 4096
+        max_tokens: int = 5000
     ) -> Dict[str, Any]:
         """
         Generate a narrative explanation for a factual/counterfactual pair.
@@ -993,13 +1126,17 @@ The resulting classification change reflects the model's learned patterns that a
                     max_retries=2
                 )
             
-            # Extract explanation from parsed JSON or use raw text
+            # Extract explanation from parsed JSON (aligned with llm_kd: all required keys must be present)
+            # Do NOT use raw output as narrative when extraction fails - use error message instead
             if parsed_json:
-                explanation = parsed_json.get("explanation", generated_text)
+                expl_val = parsed_json.get("explanation")
+                explanation = str(expl_val).strip() if expl_val else EXTRACTION_FAILED_MSG
                 reasoning = parsed_json.get("reasoning")
+                explanation_extracted = bool(explanation and explanation != EXTRACTION_FAILED_MSG)
             else:
-                explanation = generated_text
+                explanation = EXTRACTION_FAILED_MSG
                 reasoning = None
+                explanation_extracted = False
             
             # Calculate feature changes (ground truth)
             feature_changes = self._calculate_feature_changes(factual, counterfactual)
@@ -1018,7 +1155,9 @@ The resulting classification change reflects the model's learned patterns that a
                 "target_variable_change": target_variable_change,
                 "reasoning": reasoning,
                 "metrics": metrics,
-                "status": "success"
+                "status": "success",
+                "explanation_extraction_warning": not explanation_extracted,
+                "prompt": prompt_text
             }
             
         except Exception as e:
@@ -1228,7 +1367,7 @@ The resulting classification change reflects the model's learned patterns that a
         model_name: str,
         temperature: float = 0.6,
         top_p: float = 0.8,
-        max_tokens: int = 4096
+        max_tokens: int = 5000
     ) -> str:
         """Generate explanation using Google Generative AI (Gemini)."""
         if not GEMINI_AVAILABLE:
@@ -1317,6 +1456,60 @@ Your response MUST be a valid JSON object with the following structure:
 Explanation:"""
         return prompt
     
+    def _format_refiner_prompt(
+        self,
+        factual: Dict[str, Any],
+        counterfactual: Dict[str, Any],
+        dataset: str,
+        drafts: List[Optional[Dict[str, Any]]]
+    ) -> str:
+        """
+        Format the refiner prompt using llm_kd prompt_ref.
+        Aligned with llm_kd/src/pipeline.py: draft_narratives format.
+        
+        Args:
+            factual: Factual instance
+            counterfactual: Counterfactual instance
+            dataset: Dataset name
+            drafts: List of draft results (each with "explanation" key or None for failed)
+        
+        Returns:
+            Formatted refiner prompt
+        """
+        try:
+            dataset_key = dataset.lower()
+            if dataset_key not in dataset_kb:
+                dataset_key = dataset_key.title()
+            if dataset_key not in dataset_kb:
+                dataset_key = dataset
+            dataset_description = dataset_kb.get(dataset_key, f"Dataset: {dataset}")
+        except Exception:
+            dataset_description = f"Dataset: {dataset}"
+
+        draft_narratives_parts = []
+        for idx, d in enumerate(drafts or [], start=1):
+            expl = d.get("explanation") if d is not None else None
+            if expl and expl != EXTRACTION_FAILED_MSG:
+                draft_narratives_parts.append(f"### Draft Explanation {idx} ###\n{expl}")
+            else:
+                draft_narratives_parts.append(f"### Draft Explanation {idx} ###\nNone")
+        draft_narratives = "\n\n".join(draft_narratives_parts)
+
+        if prompt_ref is None:
+            # Fallback when llm_kd not available
+            return f"""Dataset: {dataset}
+Factual: {json.dumps(factual, indent=2)}
+Counterfactual: {json.dumps(counterfactual, indent=2)}
+Draft Narratives:
+{draft_narratives}
+Refine the drafts into a single JSON with explanation, reasoning, feature_changes, features_importance_ranking."""
+        return prompt_ref.format(
+            dataset_description=dataset_description,
+            factual_example=str(factual),
+            counterfactual_example=str(counterfactual),
+            draft_narratives=draft_narratives
+        )
+    
     def generate_self_refinement(
         self,
         dataset: str,
@@ -1326,10 +1519,14 @@ Explanation:"""
         fine_tuned: bool = True,
         temperature: float = 0.6,
         top_p: float = 0.8,
-        max_tokens: int = 4096
+        max_tokens: int = 5000
     ) -> Generator[Dict[str, Any], None, None]:
         """
         Generate explanation using self-refinement mode with multiple drafts.
+        
+        OPTIMIZED: Loads the model once, generates all drafts, then unloads.
+        When worker and refiner use the same base model (99.9% of cases),
+        only the LoRA adapter is swapped, keeping the base model in GPU.
         
         This is a generator that yields progress updates for each draft,
         then yields the final result.
@@ -1345,6 +1542,17 @@ Explanation:"""
             yield from self._generate_self_refinement_demo(factual, counterfactual)
             return
         
+        # Check if this is Gemini model (no GPU optimization needed)
+        if self._is_gemini_model(model):
+            yield from self._generate_self_refinement_gemini(
+                dataset, model, factual, counterfactual,
+                temperature, top_p, max_tokens
+            )
+            return
+        
+        llm = None
+        tokenizer = None
+        
         try:
             # Format prompt
             try:
@@ -1353,10 +1561,23 @@ Explanation:"""
                 print(f"Error formatting prompt: {e}")
                 prompt_text = self._format_fallback_prompt(factual, counterfactual, dataset)
             
+            # ============================================================
+            # OPTIMIZATION: Load model ONCE for all drafts
+            # ============================================================
+            print(f"🚀 Loading model {model} once for all {NUM_NARRATIVES} drafts...")
+            llm, tokenizer = self._load_vllm_model(model, enable_lora=fine_tuned)
+            print(f"✅ Model loaded and ready for batch generation")
+            
             drafts = []
             rankings = []
             
-            # Generate NUM_NARRATIVES drafts
+            # ============================================================
+            # WORKER PHASE: Generate NUM_NARRATIVES drafts
+            # ============================================================
+            print(f"\n{'='*60}")
+            print(f"WORKER PHASE: Generating {NUM_NARRATIVES} draft narratives")
+            print(f"{'='*60}")
+            
             for draft_idx in range(NUM_NARRATIVES):
                 # Yield loading status
                 yield {
@@ -1372,38 +1593,37 @@ Explanation:"""
                 # Try up to MAX_ATTEMPTS times
                 for attempt in range(MAX_ATTEMPTS):
                     try:
-                        if self._is_gemini_model(model):
-                            generated_text = self._generate_with_gemini(
-                                prompt_text,
-                                model_name=model,
-                                temperature=temperature,
-                                top_p=top_p,
-                                max_tokens=max_tokens
-                            )
-                            parsed_json = self._parse_json_response(generated_text)
-                        else:
-                            generated_text, parsed_json = self._generate_with_vllm(
-                                model_name=model,
-                                dataset=dataset,
-                                prompt_text=prompt_text,
-                                fine_tuned=fine_tuned,
-                                temperature=temperature,
-                                top_p=top_p,
-                                max_tokens=max_tokens,
-                                max_retries=1  # Only 1 retry within _generate_with_vllm
-                            )
+                        # Use persistent generation (model stays in GPU)
+                        generated_text, parsed_json = self._generate_with_vllm_persistent(
+                            llm=llm,
+                            tokenizer=tokenizer,
+                            model_name=model,
+                            dataset=dataset,
+                            prompt_text=prompt_text,
+                            fine_tuned=fine_tuned,
+                            adapter_name="worker",  # Worker adapter
+                            temperature=temperature,
+                            top_p=top_p,
+                            max_tokens=max_tokens,
+                            max_retries=1
+                        )
                         
                         if parsed_json:
+                            expl_val = parsed_json.get("explanation")
+                            explanation = str(expl_val).strip() if expl_val else EXTRACTION_FAILED_MSG
+                            explanation_extracted = bool(explanation and explanation != EXTRACTION_FAILED_MSG)
                             draft_result = {
                                 "text": generated_text,
                                 "parsed_json": parsed_json,
-                                "explanation": parsed_json.get("explanation", generated_text)
+                                "explanation": explanation,
+                                "explanation_extracted": explanation_extracted
                             }
                             draft_ranking = parse_ranking_from_json(parsed_json)
+                            print(f"✅ Draft {draft_idx + 1}/{NUM_NARRATIVES} completed")
                             break
                         
                     except Exception as e:
-                        print(f"Draft {draft_idx} attempt {attempt + 1} failed: {e}")
+                        print(f"❌ Draft {draft_idx} attempt {attempt + 1} failed: {e}")
                 
                 # Determine draft status
                 if draft_result:
@@ -1427,10 +1647,75 @@ Explanation:"""
             
             # Compute NSS from rankings
             nss = compute_narrative_semantic_similarity(rankings, alpha=NSS_ALPHA)
+            print(f"\n📊 Narrative Stability Score (NSS): {nss:.4f}")
             
-            # For now, use the first successful draft as the final explanation
-            # In a full implementation, we would use a refiner model here
-            final_draft = next((d for d in drafts if d is not None), None)
+            # ============================================================
+            # REFINER PHASE (Optional - if refiner adapter available)
+            # ============================================================
+            # Check if refiner adapter exists
+            refiner_checkpoint = self._get_lora_checkpoint_path(dataset, model, role="refiner")
+            
+            if refiner_checkpoint and fine_tuned:
+                print(f"\n{'='*60}")
+                print(f"REFINER PHASE: Refining best draft with refiner adapter")
+                print(f"{'='*60}")
+                print(f"🔄 Swapping to refiner adapter (base model stays in GPU)")
+                
+                # Use the best draft (or first successful one) as input for refiner
+                best_draft = next((d for d in drafts if d is not None), None)
+                
+                if best_draft:
+                    final_draft = best_draft  # Default fallback
+                    prompt_used = prompt_text  # Worker prompt (will override if refiner succeeds)
+                    refiner_prompt = self._format_refiner_prompt(
+                        factual, counterfactual, dataset, drafts
+                    )
+                    
+                    # Retry refinement up to MAX_ATTEMPTS times
+                    for attempt in range(MAX_ATTEMPTS):
+                        try:
+                            # Generate refined version using refiner adapter
+                            # Model stays in GPU, only adapter is swapped!
+                            refined_text, refined_json = self._generate_with_vllm_persistent(
+                                llm=llm,
+                                tokenizer=tokenizer,
+                                model_name=model,
+                                dataset=dataset,
+                                prompt_text=refiner_prompt,
+                                fine_tuned=True,
+                                adapter_name="refiner",  # Refiner adapter
+                                temperature=temperature,
+                                top_p=top_p,
+                                max_tokens=max_tokens,
+                                max_retries=2
+                            )
+                            
+                            if refined_json:
+                                print(f"✅ Refinement completed successfully (attempt {attempt + 1})")
+                                expl_val = refined_json.get("explanation")
+                                explanation = str(expl_val).strip() if expl_val else EXTRACTION_FAILED_MSG
+                                explanation_extracted = bool(explanation and explanation != EXTRACTION_FAILED_MSG)
+                                final_draft = {
+                                    "text": refined_text,
+                                    "parsed_json": refined_json,
+                                    "explanation": explanation,
+                                    "explanation_extracted": explanation_extracted
+                                }
+                                prompt_used = refiner_prompt
+                                break
+                            else:
+                                print(f"⚠️ Refinement attempt {attempt + 1}: JSON parsing failed, retrying...")
+                        except Exception as e:
+                            print(f"⚠️ Refinement attempt {attempt + 1} failed: {e}")
+                            if attempt == MAX_ATTEMPTS - 1:
+                                print(f"   Using best draft after {MAX_ATTEMPTS} failed attempts")
+                else:
+                    final_draft = None
+                    prompt_used = prompt_text
+            else:
+                # No refiner available, use first successful draft
+                final_draft = next((d for d in drafts if d is not None), None)
+                prompt_used = prompt_text if final_draft else None
             
             if final_draft is None:
                 yield {
@@ -1459,8 +1744,12 @@ Explanation:"""
                     "index": i,
                     "status": "success" if d is not None else "failed",
                     "ranking": r,
-                    "explanation": d["explanation"] if d is not None else None
+                    "explanation": d["explanation"] if d is not None else None,
+                    "explanation_extracted": d.get("explanation_extracted", True) if d is not None else True
                 })
+            
+            # Check if final narrative had explanation extracted (for warning mode)
+            final_explanation_extracted = final_draft.get("explanation_extracted", True)
             
             # Yield final result
             yield {
@@ -1474,9 +1763,161 @@ Explanation:"""
                 "metrics": metrics,
                 "drafts": final_drafts,
                 "nss": nss if not math.isnan(nss) else None,
-                "status": "success"
+                "status": "success",
+                "explanation_extraction_warning": not final_explanation_extracted,
+                "prompt": prompt_used
             }
             
+        except Exception as e:
+            print(f"❌ Self-refinement error: {e}")
+            yield {
+                "type": "error",
+                "message": str(e)
+            }
+        finally:
+            # ============================================================
+            # CLEANUP: Unload model ONCE after all generations
+            # ============================================================
+            if llm is not None:
+                print(f"\n{'='*60}")
+                print(f"CLEANUP: Unloading model after all generations")
+                print(f"{'='*60}")
+                self._unload_vllm_model(llm)
+    
+    def _generate_self_refinement_gemini(
+        self,
+        dataset: str,
+        model: str,
+        factual: Dict[str, Any],
+        counterfactual: Dict[str, Any],
+        temperature: float = 0.6,
+        top_p: float = 0.8,
+        max_tokens: int = 5000
+    ) -> Generator[Dict[str, Any], None, None]:
+        """
+        Generate self-refinement using Gemini model (no GPU optimization needed).
+        """
+        try:
+            # Format prompt
+            try:
+                prompt_text = self._format_prompt(factual, counterfactual, dataset)
+            except Exception as e:
+                print(f"Error formatting prompt: {e}")
+                prompt_text = self._format_fallback_prompt(factual, counterfactual, dataset)
+            
+            drafts = []
+            rankings = []
+            
+            # Generate NUM_NARRATIVES drafts
+            for draft_idx in range(NUM_NARRATIVES):
+                yield {
+                    "type": "draft_progress",
+                    "index": draft_idx,
+                    "status": "loading",
+                    "ranking": None
+                }
+                
+                draft_result = None
+                draft_ranking = None
+                
+                for attempt in range(MAX_ATTEMPTS):
+                    try:
+                        generated_text = self._generate_with_gemini(
+                            prompt_text,
+                            model_name=model,
+                            temperature=temperature,
+                            top_p=top_p,
+                            max_tokens=max_tokens
+                        )
+                        parsed_json = self._parse_json_response(generated_text)
+                        
+                        if parsed_json:
+                            expl_val = parsed_json.get("explanation")
+                            explanation = str(expl_val).strip() if expl_val else EXTRACTION_FAILED_MSG
+                            explanation_extracted = bool(explanation and explanation != EXTRACTION_FAILED_MSG)
+                            draft_result = {
+                                "text": generated_text,
+                                "parsed_json": parsed_json,
+                                "explanation": explanation,
+                                "explanation_extracted": explanation_extracted
+                            }
+                            draft_ranking = parse_ranking_from_json(parsed_json)
+                            break
+                    except Exception as e:
+                        print(f"Draft {draft_idx} attempt {attempt + 1} failed: {e}")
+                
+                if draft_result:
+                    drafts.append(draft_result)
+                    rankings.append(draft_ranking)
+                    yield {
+                        "type": "draft_progress",
+                        "index": draft_idx,
+                        "status": "success",
+                        "ranking": draft_ranking
+                    }
+                else:
+                    drafts.append(None)
+                    rankings.append(None)
+                    yield {
+                        "type": "draft_progress",
+                        "index": draft_idx,
+                        "status": "failed",
+                        "ranking": None
+                    }
+            
+            # Compute NSS
+            nss = compute_narrative_semantic_similarity(rankings, alpha=NSS_ALPHA)
+            
+            # Use first successful draft
+            final_draft = next((d for d in drafts if d is not None), None)
+            
+            if final_draft is None:
+                yield {
+                    "type": "error",
+                    "message": "All draft generations failed"
+                }
+                return
+            
+            # Calculate metrics
+            feature_changes = self._calculate_feature_changes(factual, counterfactual)
+            target_variable_change = self._extract_target_change(factual, counterfactual)
+            metrics = self._compute_metrics(
+                final_draft["parsed_json"],
+                feature_changes,
+                target_variable_change,
+                factual,
+                counterfactual
+            )
+            
+            # Build final drafts
+            final_drafts = []
+            for i, (d, r) in enumerate(zip(drafts, rankings)):
+                final_drafts.append({
+                    "index": i,
+                    "status": "success" if d is not None else "failed",
+                    "ranking": r,
+                    "explanation": d["explanation"] if d is not None else None,
+                    "explanation_extracted": d.get("explanation_extracted", True) if d is not None else True
+                })
+            
+            final_explanation_extracted = final_draft.get("explanation_extracted", True)
+            
+            # Yield final result
+            yield {
+                "type": "complete",
+                "explanation": final_draft["explanation"],
+                "raw_output": final_draft["text"],
+                "parsed_json": final_draft["parsed_json"],
+                "feature_changes": feature_changes,
+                "target_variable_change": target_variable_change,
+                "reasoning": final_draft["parsed_json"].get("reasoning") if final_draft["parsed_json"] else None,
+                "metrics": metrics,
+                "drafts": final_drafts,
+                "nss": nss if not math.isnan(nss) else None,
+                "status": "success",
+                "explanation_extraction_warning": not final_explanation_extracted,
+                "prompt": prompt_text
+            }
         except Exception as e:
             yield {
                 "type": "error",
@@ -1532,7 +1973,8 @@ Explanation:"""
                 "index": draft_idx,
                 "status": "success",
                 "ranking": ranking,
-                "explanation": draft_explanation
+                "explanation": draft_explanation,
+                "explanation_extracted": True
             })
             
             # Yield success status
@@ -1567,7 +2009,9 @@ Explanation:"""
             "drafts": drafts,
             "nss": nss if not math.isnan(nss) else None,
             "status": "demo",
-            "warning": "CUDA is not available. The generated explanation is just a template."
+            "warning": "CUDA is not available. The generated explanation is just a template.",
+            "explanation_extraction_warning": False,
+            "prompt": None
         }
 
 
