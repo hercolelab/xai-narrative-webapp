@@ -212,6 +212,7 @@ async def explain_stream(request: ExplainRequest):
                     factual=request.factual,
                     counterfactual=request.counterfactual,
                     fine_tuned=request.fine_tuned,
+                    num_narratives=request.num_narratives,
                     temperature=request.temperature,
                     top_p=request.top_p,
                     max_tokens=request.max_tokens

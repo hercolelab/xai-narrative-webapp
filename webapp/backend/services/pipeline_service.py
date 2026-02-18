@@ -88,16 +88,22 @@ HUGGINGFACE_ADAPTER_REPOS = {
     ("titanic", "qwen3_0.6B", "refiner"): "phdsilver22/counterfactual_generator-titanic-qwen3_0.6B-refiner",
     ("titanic", "deepseek_r1_qwen_1.5B", "worker"): "phdsilver22/counterfactual_generator-titanic-deepseek_r1_qwen_1.5B-worker",
     ("titanic", "deepseek_r1_qwen_1.5B", "refiner"): "phdsilver22/counterfactual_generator-titanic-deepseek_r1_qwen_1.5B-refiner",
+    ("california", "qwen_0.5B", "worker"): "phdsilver22/counterfactual_generator-california-qwen_0.5B-worker",
+    ("california", "qwen_0.5B", "refiner"): "phdsilver22/counterfactual_generator-california-qwen_0.5B-refiner",
     ("california", "llama_1B-Instruct", "worker"): "phdsilver22/counterfactual_generator-california-llama_1B-Instruct-worker",
     ("california", "llama_1B-Instruct", "refiner"): "phdsilver22/counterfactual_generator-california-llama_1B-Instruct-refiner",
+    ("california", "deepseek_r1_qwen_1.5B", "worker"): "phdsilver22/counterfactual_generator-california-deepseek_r1_qwen_1.5B-worker",
+    ("california", "deepseek_r1_qwen_1.5B", "refiner"): "phdsilver22/counterfactual_generator-california-deepseek_r1_qwen_1.5B-refiner",
     ("diabetes", "qwen_0.5B", "worker"): "phdsilver22/counterfactual_generator-diabetes-qwen_0.5B-worker",
     ("diabetes", "qwen_0.5B", "refiner"): "phdsilver22/counterfactual_generator-diabetes-qwen_0.5B-refiner",
     ("diabetes", "llama_1B-Instruct", "worker"): "phdsilver22/counterfactual_generator-diabetes-llama_1B-Instruct-worker",
     ("diabetes", "llama_1B-Instruct", "refiner"): "phdsilver22/counterfactual_generator-diabetes-llama_1B-Instruct-refiner",
     ("diabetes", "qwen3_1.7B", "worker"): "phdsilver22/counterfactual_generator-diabetes-qwen3_1.7B-worker",
     ("diabetes", "qwen3_1.7B", "refiner"): "phdsilver22/counterfactual_generator-diabetes-qwen3_1.7B-refiner",
-    ("adult", "deepseek_r1_qwen_1.5B", "worker"): "phdsilver22/counterfactual_generator-adult-deepseek_r1_qwen_1.5B-worker",
-    ("adult", "deepseek_r1_qwen_1.5B", "refiner"): "phdsilver22/counterfactual_generator-adult-deepseek_r1_qwen_1.5B-refiner",
+    ("adult", "qwen3_0.6B", "worker"): "phdsilver22/counterfactual_generator-adult-qwen3_0.6B-worker",
+    ("adult", "qwen3_0.6B", "refiner"): "phdsilver22/counterfactual_generator-adult-qwen3_0.6B-refiner",
+    ("adult", "qwen3_1.7B", "worker"): "phdsilver22/counterfactual_generator-adult-qwen3_1.7B-worker",
+    ("adult", "qwen3_1.7B", "refiner"): "phdsilver22/counterfactual_generator-adult-qwen3_1.7B-refiner",
 }
 
 # Try to import from llm_kd
@@ -1517,6 +1523,7 @@ Refine the drafts into a single JSON with explanation, reasoning, feature_change
         factual: Dict[str, Any],
         counterfactual: Dict[str, Any],
         fine_tuned: bool = True,
+        num_narratives: int = 5,
         temperature: float = 0.6,
         top_p: float = 0.8,
         max_tokens: int = 5000
@@ -1539,14 +1546,14 @@ Refine the drafts into a single JSON with explanation, reasoning, feature_change
         """
         # Check if this is demo mode
         if model == "demo":
-            yield from self._generate_self_refinement_demo(factual, counterfactual)
+            yield from self._generate_self_refinement_demo(factual, counterfactual, num_narratives)
             return
         
         # Check if this is Gemini model (no GPU optimization needed)
         if self._is_gemini_model(model):
             yield from self._generate_self_refinement_gemini(
                 dataset, model, factual, counterfactual,
-                temperature, top_p, max_tokens
+                num_narratives, temperature, top_p, max_tokens
             )
             return
         
@@ -1564,7 +1571,7 @@ Refine the drafts into a single JSON with explanation, reasoning, feature_change
             # ============================================================
             # OPTIMIZATION: Load model ONCE for all drafts
             # ============================================================
-            print(f"🚀 Loading model {model} once for all {NUM_NARRATIVES} drafts...")
+            print(f"🚀 Loading model {model} once for all {num_narratives} drafts...")
             llm, tokenizer = self._load_vllm_model(model, enable_lora=fine_tuned)
             print(f"✅ Model loaded and ready for batch generation")
             
@@ -1572,13 +1579,13 @@ Refine the drafts into a single JSON with explanation, reasoning, feature_change
             rankings = []
             
             # ============================================================
-            # WORKER PHASE: Generate NUM_NARRATIVES drafts
+            # WORKER PHASE: Generate num_narratives drafts
             # ============================================================
             print(f"\n{'='*60}")
-            print(f"WORKER PHASE: Generating {NUM_NARRATIVES} draft narratives")
+            print(f"WORKER PHASE: Generating {num_narratives} draft narratives")
             print(f"{'='*60}")
             
-            for draft_idx in range(NUM_NARRATIVES):
+            for draft_idx in range(num_narratives):
                 # Yield loading status
                 yield {
                     "type": "draft_progress",
@@ -1619,7 +1626,7 @@ Refine the drafts into a single JSON with explanation, reasoning, feature_change
                                 "explanation_extracted": explanation_extracted
                             }
                             draft_ranking = parse_ranking_from_json(parsed_json)
-                            print(f"✅ Draft {draft_idx + 1}/{NUM_NARRATIVES} completed")
+                            print(f"✅ Draft {draft_idx + 1}/{num_narratives} completed")
                             break
                         
                     except Exception as e:
@@ -1790,6 +1797,7 @@ Refine the drafts into a single JSON with explanation, reasoning, feature_change
         model: str,
         factual: Dict[str, Any],
         counterfactual: Dict[str, Any],
+        num_narratives: int = 5,
         temperature: float = 0.6,
         top_p: float = 0.8,
         max_tokens: int = 5000
@@ -1808,8 +1816,8 @@ Refine the drafts into a single JSON with explanation, reasoning, feature_change
             drafts = []
             rankings = []
             
-            # Generate NUM_NARRATIVES drafts
-            for draft_idx in range(NUM_NARRATIVES):
+            # Generate num_narratives drafts
+            for draft_idx in range(num_narratives):
                 yield {
                     "type": "draft_progress",
                     "index": draft_idx,
@@ -1927,7 +1935,8 @@ Refine the drafts into a single JSON with explanation, reasoning, feature_change
     def _generate_self_refinement_demo(
         self,
         factual: Dict[str, Any],
-        counterfactual: Dict[str, Any]
+        counterfactual: Dict[str, Any],
+        num_narratives: int = 5
     ) -> Generator[Dict[str, Any], None, None]:
         """
         Generate self-refinement demo output with simulated delays.
@@ -1944,8 +1953,8 @@ Refine the drafts into a single JSON with explanation, reasoning, feature_change
         drafts = []
         rankings = []
         
-        # Generate 5 draft "generations" with 1s delay each
-        for draft_idx in range(NUM_NARRATIVES):
+        # Generate num_narratives draft "generations" with 1s delay each
+        for draft_idx in range(num_narratives):
             # Yield loading status
             yield {
                 "type": "draft_progress",

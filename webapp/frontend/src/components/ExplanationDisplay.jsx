@@ -1,9 +1,7 @@
 import React, { useState } from 'react';
 import demoNarratives from '../demoNarratives';
 
-const NUM_NARRATIVES = 5;
-
-const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loading, error, drafts = [], nss = null, generationType = 'one-shot', selectedModel = '', selectedDataset = '', explanationExtractionWarning = false, prompt = null }) => {
+const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loading, error, drafts = [], nss = null, generationType = 'one-shot', numNarratives = 5, selectedModel = '', selectedDataset = '', explanationExtractionWarning = false, prompt = null }) => {
   const [copied, setCopied] = useState(false);
   const [showJsonModal, setShowJsonModal] = useState(false);
   const [showRawOutputModal, setShowRawOutputModal] = useState(false);
@@ -62,8 +60,8 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
   const DraftProgressSection = () => {
     if (generationType !== 'self-refinement') return null;
     
-    // Create array of 5 draft statuses
-    const draftStatuses = Array(NUM_NARRATIVES).fill(null).map((_, i) => {
+    // Create array of draft statuses
+    const draftStatuses = Array(numNarratives).fill(null).map((_, i) => {
       if (drafts[i]) return drafts[i].status;
       return 'pending';
     });
@@ -115,13 +113,13 @@ const ExplanationDisplay = ({ explanation, rawOutput, parsedJson, metrics, loadi
           {generationType === 'self-refinement' && (
             <div className="mt-6 flex flex-col items-center gap-3">
               <div className="flex items-center gap-2">
-                {Array(NUM_NARRATIVES).fill(null).map((_, idx) => {
+                {Array(numNarratives).fill(null).map((_, idx) => {
                   const draftStatus = drafts[idx]?.status || 'pending';
                   return <DraftIndicator key={idx} status={draftStatus} index={idx} />;
                 })}
               </div>
               <span className="text-xs text-neutral-500">
-                {drafts.filter(d => d?.status === 'success').length} / {NUM_NARRATIVES} drafts completed
+                {drafts.filter(d => d?.status === 'success').length} / {numNarratives} drafts completed
               </span>
             </div>
           )}

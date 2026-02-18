@@ -12,6 +12,7 @@ class ExplainRequest(BaseModel):
     generation_type: Literal["one-shot", "self-refinement"] = Field(default="one-shot", description="Generation type: one-shot or self-refinement")
     use_refiner: bool = Field(default=False, description="Whether to use refiner (deprecated, use generation_type)")
     fine_tuned: bool = Field(default=True, description="Whether to use fine-tuned model with LoRA adapter")
+    num_narratives: int = Field(default=5, ge=1, le=5, description="Number of draft narratives to generate (self-refinement only, min 1, max 5)")
     temperature: float = Field(default=0.6, ge=0.0, le=2.0, description="Generation temperature")
     top_p: float = Field(default=0.8, ge=0.0, le=1.0, description="Top-p sampling parameter")
     max_tokens: int = Field(default=5000, ge=1, le=8192, description="Maximum tokens to generate")

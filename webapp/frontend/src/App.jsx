@@ -106,6 +106,7 @@ function App() {
   const [selectedModel, setSelectedModel] = useState('');
   const [generationType, setGenerationType] = useState('');
   const [fineTuned, setFineTuned] = useState(true);
+  const [numNarratives, setNumNarratives] = useState(5); // Drafts to generate (1–5, self-refinement only)
   const [factual, setFactual] = useState(null);
   const [counterfactual, setCounterfactual] = useState(null);
   const [explanation, setExplanation] = useState(null);
@@ -471,6 +472,7 @@ function App() {
             counterfactual,
             generation_type: generationType,
             fine_tuned: effectiveFineTuned,
+            num_narratives: numNarratives,
             temperature: 0.6,
             top_p: 0.8,
             max_tokens: 5000
@@ -661,25 +663,27 @@ function App() {
               />
             </div>
 
-            {/* Fine-tuned checkbox - only show when model is selected */}
-            {selectedModel && selectedModel !== 'demo' && (
+            {/* Fine-tuned checkbox and num narratives - show when model selected and/or self-refinement */}
+            {((selectedModel && selectedModel !== 'demo') || generationType === 'self-refinement') && (
               <div className="mb-6">
-                <div className="relative group">
-                  <label className={`flex items-center gap-3 ${modelsWithAdapters && modelsWithAdapters[selectedModel] ? 'cursor-pointer' : 'cursor-not-allowed'}`}>
-                    <input
-                      type="checkbox"
-                      checked={fineTuned}
-                      onChange={(e) => setFineTuned(e.target.checked)}
-                      disabled={loading || loadingExample || !(modelsWithAdapters && modelsWithAdapters[selectedModel])}
-                      className="w-5 h-5 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-2 focus:ring-accent-500 focus:ring-offset-2 focus:ring-offset-dark-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed theme-checkbox"
-                    />
-                    <span className={`text-sm transition-colors ${modelsWithAdapters && modelsWithAdapters[selectedModel] ? 'text-neutral-300 group-hover:text-white' : 'text-neutral-500'}`}>
-                      Use Fine-tuned Model (LoRA)
-                    </span>
-                  </label>
-                  
-                  {/* Tooltip for disabled checkbox */}
-                  {!(modelsWithAdapters && modelsWithAdapters[selectedModel]) && (() => {
+                <div className="flex flex-wrap items-center gap-6">
+                  {selectedModel && selectedModel !== 'demo' && (
+                    <div className="relative group">
+                      <label className={`flex items-center gap-3 ${modelsWithAdapters && modelsWithAdapters[selectedModel] ? 'cursor-pointer' : 'cursor-not-allowed'}`}>
+                        <input
+                          type="checkbox"
+                          checked={fineTuned}
+                          onChange={(e) => setFineTuned(e.target.checked)}
+                          disabled={loading || loadingExample || !(modelsWithAdapters && modelsWithAdapters[selectedModel])}
+                          className="w-5 h-5 rounded border-dark-600 bg-dark-800 text-accent-500 focus:ring-2 focus:ring-accent-500 focus:ring-offset-2 focus:ring-offset-dark-900 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed theme-checkbox"
+                        />
+                        <span className={`text-sm transition-colors ${modelsWithAdapters && modelsWithAdapters[selectedModel] ? 'text-neutral-300 group-hover:text-white' : 'text-neutral-500'}`}>
+                          Use Fine-tuned Model (LoRA)
+                        </span>
+                      </label>
+                      
+                      {/* Tooltip for disabled checkbox */}
+                      {!(modelsWithAdapters && modelsWithAdapters[selectedModel]) && (() => {
                     const adapterModelsList = modelsWithAdapters
                       ? Object.entries(modelsWithAdapters).filter(([, has]) => has).map(([m]) => m)
                       : [];
@@ -711,8 +715,43 @@ function App() {
                       </div>
                     );
                   })()}
+                    </div>
+                  )}
+                  {generationType === 'self-refinement' && (
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-neutral-300">Drafts:</span>
+                      <div className="flex items-center border border-dark-600 rounded-lg overflow-hidden bg-dark-800">
+                        <button
+                          type="button"
+                          onClick={() => setNumNarratives(n => Math.max(1, n - 1))}
+                          disabled={loading || loadingExample || numNarratives <= 1}
+                          className="px-3 py-1.5 text-neutral-300 hover:bg-dark-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          aria-label="Decrease number of drafts"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                          </svg>
+                        </button>
+                        <span className="px-3 py-1.5 min-w-[2rem] text-center text-sm font-medium text-white tabular-nums">
+                          {numNarratives}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setNumNarratives(n => Math.min(5, n + 1))}
+                          disabled={loading || loadingExample || numNarratives >= 5}
+                          className="px-3 py-1.5 text-neutral-300 hover:bg-dark-600 hover:text-white disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                          aria-label="Increase number of drafts"
+                        >
+                          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 
+                {selectedModel && selectedModel !== 'demo' && (
                 <p className="mt-1 text-xs text-neutral-500 ml-8">
                   {modelsWithAdapters && modelsWithAdapters[selectedModel] ? (
                     fineTuned 
@@ -727,6 +766,7 @@ function App() {
                     })()
                   )}
                 </p>
+                )}
               </div>
             )}
 
@@ -874,6 +914,7 @@ function App() {
             drafts={drafts}
             nss={nss}
             generationType={generationType}
+            numNarratives={numNarratives}
             selectedModel={selectedModel}
             selectedDataset={selectedDataset}
             explanationExtractionWarning={explanationExtractionWarning}
