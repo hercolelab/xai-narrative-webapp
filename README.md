@@ -11,7 +11,7 @@ Research software for generating natural-language explanations grounded in factu
 - Evaluate outputs with Perfect Feature Faithfulness (PFF), Target Faithfulness (TF), and JSON Parsing Rate (JPR); compare quality and inference costs across models and refinement settings.
 - Use the backend API and frontend components for interactive inference and comparison.
 
-The `llm_kd/` submodule contains the training, inference, and evaluation pipeline. See [SETUP.md](SETUP.md) and the [backend](webapp/README.md) instructions for setup details. Fine-tuned model artifacts are listed at [Hugging Face](https://huggingface.co/phdsilver22/models).
+**Fine-tuning code:** go to the `llm_kd/` Git submodule; the student training scripts and configurations live there. Initialize it with `git submodule update --init --recursive`. This repository contains the inference API and optional interface. See [SETUP.md](SETUP.md) for setup details. Fine-tuned model artifacts are listed at [Hugging Face](https://huggingface.co/phdsilver22/models).
 
 ## Additional Results: full Table 1
 
