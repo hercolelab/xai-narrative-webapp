@@ -1,143 +1,62 @@
-# Narrative Explanation Systems with SLMs
+# Counterfactual Narrative XAI
 
-A modern, full-stack web application for generating human-readable counterfactual narrative explanations using Large Language Models (LLMs). This application provides an intuitive interface for exploring how changes in input features affect model predictions through natural language explanations.
+Research software for generating natural-language explanations grounded in factual–counterfactual pairs. It combines small-language-model inference, knowledge distillation, multi-draft self-refinement, structured evaluation, and an optional interactive interface.
 
-![Pipeline](img/pipeline.jpg)
+## Core functionality
 
-![User Interface](img/UI.jpg)
+- Generate counterfactual narratives directly or use a multi-narrative pipeline that refines several drafts into one explanation.
+- Work with Adult Income, California Housing, Diabetes, and Titanic examples.
+- Run base or fine-tuned language models through the local inference stack (vLLM-supported models require a compatible GPU).
+- Return structured explanation fields alongside the natural-language narrative, enabling checks of changed features and target labels.
+- Evaluate outputs with Perfect Feature Faithfulness (PFF), Target Faithfulness (TF), and JSON Parsing Rate (JPR); compare quality and inference costs across models and refinement settings.
+- Use the backend API and frontend components for interactive inference and comparison.
 
-## 🚀 Quick Start
+The `llm_kd/` submodule contains the training, inference, and evaluation pipeline. See [SETUP.md](SETUP.md) and the [backend](webapp/README.md) instructions for setup details. Fine-tuned model artifacts are listed at [Hugging Face](https://huggingface.co/phdsilver22/models).
 
-### Prerequisites
+## Additional Results: full Table 1
 
-- **Python 3.8+**
-- **Node.js 16+**
-- **Git** (for submodule management)
-- **GPU with CUDA** (optional, for vLLM models)
+The paper reports four-dataset means. This table gives the full per-dataset breakdown. Every metric entry is **without refiner / with refiner**; Plain denotes the base model and FT the knowledge-distilled, LoRA fine-tuned model. The teacher has no FT results. Values are proportions in $[0,1]$.
 
-### Initial Setup
+| Dataset | Model | PFF Plain | PFF FT | TF Plain | TF FT | JPR Plain | JPR FT |
+|---|---|---:|---:|---:|---:|---:|---:|
+| Adult | Qwen2-0.5B | 0.00/0.03 | 0.68/0.70 | 0.01/0.05 | 1.00/1.00 | 0.90/0.86 | 0.95/0.98 |
+| Adult | Qwen3-0.6B | 0.00/0.00 | 0.76/0.80 | 0.93/0.33 | 0.92/0.94 | 0.98/0.93 | 1.00/1.00 |
+| Adult | Llama3-1B | 0.00/0.00 | 0.53/0.48 | 0.08/0.03 | 0.99/1.00 | 0.32/0.36 | 0.72/0.71 |
+| Adult | DeepSeek-1.5B | 0.00/0.00 | 0.92/0.91 | 0.53/0.32 | 0.99/0.99 | 0.74/0.66 | 0.98/1.00 |
+| Adult | Qwen3-1.7B | 0.27/0.22 | 0.94/0.96 | 1.00/1.00 | 1.00/1.00 | 1.00/1.00 | 1.00/1.00 |
+| Adult | Qwen3-30B | 0.88/0.75 | -- | 0.99/0.99 | -- | 0.99/0.99 | -- |
+| California | Qwen2-0.5B | 0.00/0.00 | 0.34/0.77 | 0.41/0.06 | 1.00/1.00 | 0.97/0.93 | 0.91/0.96 |
+| California | Qwen3-0.6B | 0.00/0.00 | 0.86/0.86 | 0.82/0.37 | 1.00/1.00 | 0.99/0.98 | 1.00/1.00 |
+| California | Llama3-1B | 0.00/0.00 | 0.74/0.87 | 0.78/0.58 | 1.00/1.00 | 0.86/0.44 | 0.83/0.72 |
+| California | DeepSeek-1.5B | 0.02/0.00 | 0.81/0.91 | 0.86/0.37 | 0.98/1.00 | 0.77/0.68 | 0.98/1.00 |
+| California | Qwen3-1.7B | 0.45/0.55 | 0.97/0.99 | 1.00/1.00 | 1.00/1.00 | 0.98/1.00 | 1.00/1.00 |
+| California | Qwen3-30B | 0.68/0.73 | -- | 0.99/0.99 | -- | 1.00/1.00 | -- |
+| Diabetes | Qwen2-0.5B | 0.00/0.01 | 0.51/0.74 | 0.13/0.13 | 0.70/1.00 | 0.80/0.92 | 0.98/0.99 |
+| Diabetes | Qwen3-0.6B | 0.00/0.01 | 0.19/0.83 | 0.99/0.92 | 0.94/0.98 | 0.97/0.86 | 1.00/0.98 |
+| Diabetes | Llama3-1B | 0.00/0.00 | 0.69/0.77 | 0.48/0.40 | 0.77/1.00 | 0.63/0.10 | 0.97/0.96 |
+| Diabetes | DeepSeek-1.5B | 0.00/0.00 | 0.73/0.91 | 0.81/0.37 | 0.87/1.00 | 0.83/0.72 | 0.99/1.00 |
+| Diabetes | Qwen3-1.7B | 0.08/0.09 | 0.80/0.95 | 1.00/1.00 | 0.98/1.00 | 0.98/1.00 | 1.00/1.00 |
+| Diabetes | Qwen3-30B | 0.66/0.70 | -- | 1.00/1.00 | -- | 1.00/1.00 | -- |
+| Titanic | Qwen2-0.5B | 0.00/0.00 | 0.70/0.72 | 0.07/0.00 | 0.93/1.00 | 0.97/0.97 | 0.98/0.99 |
+| Titanic | Qwen3-0.6B | 0.01/0.01 | 0.62/0.96 | 0.52/0.12 | 0.91/1.00 | 0.97/0.97 | 1.00/1.00 |
+| Titanic | Llama3-1B | 0.00/0.00 | 0.38/0.55 | 0.12/0.00 | 0.42/1.00 | 0.81/0.27 | 0.75/0.97 |
+| Titanic | DeepSeek-1.5B | 0.03/0.01 | 0.84/0.95 | 0.46/0.28 | 0.88/1.00 | 0.71/0.75 | 0.99/1.00 |
+| Titanic | Qwen3-1.7B | 0.50/0.46 | 0.84/0.98 | 1.00/1.00 | 0.95/1.00 | 1.00/1.00 | 1.00/1.00 |
+| Titanic | Qwen3-30B | 0.80/0.73 | -- | 0.99/0.99 | -- | 0.99/0.99 | -- |
 
-1. **Clone the repository with submodules:**
-   ```bash
-   git clone --recurse-submodules <repository-url>
-   cd xai-narrative-webapp
-   ```
+PFF = Perfect Feature Faithfulness; TF = Target Faithfulness; JPR = JSON Parsing Rate.
 
-   If you already cloned without submodules:
-   ```bash
-   git submodule update --init --recursive
-   ```
+### LLM narrative-consistency audit
 
-2. **Start the backend:**
-   ```bash
-   cd webapp
-   ./start-backend.sh
-   ```
+Change Recall (CR) and Value Precision (VP) compare the generated prose with the structured counterfactual evidence. Entries are percentages.
 
-3. **Start the frontend** (in a new terminal):
-   ```bash
-   cd webapp
-   ./start-frontend.sh
-   ```
+| Pipeline | Qwen2-0.5B CR | VP | Qwen3-0.6B CR | VP | Llama3-1B CR | VP | DeepSeek-1.5B CR | VP | Qwen3-1.7B CR | VP |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| w/o Refiner, Plain | 16.3 | 46.5 | 72.0 | 92.0 | 15.8 | 26.3 | 50.0 | 77.3 | 92.5 | 100.0 |
+| w/o Refiner, FT | 91.7 | 95.0 | 88.3 | 91.7 | 97.5 | 90.0 | 95.0 | 100.0 | 97.5 | 100.0 |
+| w/ Refiner, Plain | 83.3 | 100.0 | 66.7 | 66.7 | 88.0 | 96.0 | 33.3 | 66.7 | 96.7 | 100.0 |
+| w/ Refiner, FT | 86.7 | 93.3 | 93.3 | 98.3 | 100.0 | 94.5 | 96.7 | 98.3 | 96.7 | 100.0 |
 
-4. **Open your browser:**
-   Navigate to `http://localhost:5173`
+## Optional interactive dashboard
 
-## ✨ Features
-
-- **🎯 Dataset Support**: Adult Income, Titanic, California Housing, Diabetes
-- **🤖 Multi-Model Support**: 
-  - vLLM models (local GPU inference)
-- **🔄 Dynamic Counterfactuals**: Load new counterfactuals for the same factual instance
-- **📊 Visual Comparison**: Side-by-side comparison with highlighted differences
-- **📝 Narrative Explanations**: Human-readable explanations generated by LLMs
-- **🌓 Light/Dark Theme**: Toggle between light and dark themes
-- **🎨 Fine-tuned Models**: Option to run fine-tuned models (available on [Hugging Face](https://huggingface.co/phdsilver22/models)) or base models
-- **🔧 Refiner Pipeline**: Toggle refiner pipeline on or off
-- **📋 Copy to Clipboard**: Easy sharing of explanations
-
-## 📁 Project Structure
-
-```
-xai-narrative-webapp/
-├── llm_kd/                    # Git submodule - LLM pipeline repository
-│   ├── src/
-│   │   ├── utils.py           # MODEL_MAPPING and prompt templates
-│   │   └── pipeline.py        # LLM pipeline implementation
-│   └── data/
-│       └── dataset_kb.py      # Dataset knowledge base
-├── webapp/                    # Main application directory
-│   ├── backend/               # FastAPI backend
-│   │   ├── api/              # API endpoints
-│   │   ├── services/         # Business logic
-│   │   └── requirements.txt  # Python dependencies
-│   └── frontend/             # React frontend
-│       ├── src/              # React components
-│       └── package.json     # Node dependencies
-├── README.md                 # This file
-├── SETUP.md                  # Detailed setup guide
-└── .gitmodules              # Git submodule configuration
-```
-
-## 📚 Documentation
-
-- **[Webapp README](webapp/README.md)**: Detailed documentation for the webapp
-- **[Quick Start Guide](webapp/QUICKSTART.md)**: Step-by-step setup instructions
-- **[Setup Guide](SETUP.md)**: llm_kd integration and submodule management
-
-## 🔧 Configuration
-
-### Environment Variables
-
-Create a `.env` file in `webapp/backend/`:
-
-```bash
-# GPU Configuration (for vLLM)
-TENSOR_PARALLEL_SIZE=1
-GPU_MEMORY_UTILIZATION=0.9
-
-# API Configuration
-API_HOST=0.0.0.0
-API_PORT=8000
-```
-
-## 🔄 Updating the llm_kd Submodule
-
-To sync with the latest changes from the llm_kd repository:
-
-```bash
-cd llm_kd
-git pull origin main  # or your branch
-cd ..
-git add llm_kd
-git commit -m "Update llm_kd submodule"
-```
-
-## 🧪 Usage
-
-1. **Select a Dataset**: Choose from Adult Income, Titanic, California Housing, or Diabetes
-2. **Select a Model**: Choose a vLLM model (requires GPU)
-3. **Load Example**: Click "Load Example" to fetch a factual/counterfactual pair
-4. **New Counterfactual**: Click "New Counterfactual" to get a different counterfactual for the same factual
-5. **Generate Explanation**: Click "Generate Explanation" to create a narrative explanation
-6. **View Results**: See the explanation, feature changes, and target variable changes
-
-## 🤝 Contributing
-
-1. Ensure llm_kd submodule is up to date
-2. Make changes in the appropriate directory (`webapp/backend/` or `webapp/frontend/`)
-3. Test your changes locally
-4. Submit a pull request
-
-## 🎯 Project Goals
-
-This application aims to:
-- Provide an intuitive interface for exploring counterfactual explanations
-- Support multiple LLM backends (local and cloud)
-- Generate high-quality, human-readable narrative explanations
-- Enable easy comparison of different counterfactual scenarios
-
----
-
-For detailed setup instructions, see [webapp/QUICKSTART.md](webapp/QUICKSTART.md) or [SETUP.md](SETUP.md).
-
+The repository also includes an interactive interface for selecting a dataset and model, loading factual–counterfactual examples, generating narratives, and comparing the resulting feature and target changes. It is an optional way to run inference and explore outputs; the research pipeline and evaluation scripts remain available independently of the interface. See [webapp/QUICKSTART.md](webapp/QUICKSTART.md) for launch instructions.
